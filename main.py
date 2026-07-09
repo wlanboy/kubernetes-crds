@@ -5,6 +5,8 @@ import argparse
 import logging
 import sys
 
+import urllib3
+from kubernetes.client.rest import ApiException
 from kubernetes.config import ConfigException
 
 from kubectl import CRDVersionedInfo, get_crd_versions, load_config
@@ -96,13 +98,16 @@ def main() -> int:
         print(f"Error: could not load Kubernetes configuration: {e}", file=sys.stderr)
         return 1
 
-    crds = get_crd_versions(namespace=args.namespace)
-
-    if args.openshift:
-        crds = sorted(
-            crds + get_openshift_resource_versions(namespace=args.namespace),
-            key=lambda c: (c.group, c.kind),
-        )
+    try:
+        crds = get_crd_versions(namespace=args.namespace)
+        if args.openshift:
+            crds = sorted(
+                crds + get_openshift_resource_versions(namespace=args.namespace),
+                key=lambda c: (c.group, c.kind),
+            )
+    except (ApiException, urllib3.exceptions.HTTPError) as e:
+        print(f"Error: could not reach the Kubernetes API server: {e}", file=sys.stderr)
+        return 1
 
     if not crds:
         print("No CRDs found.")

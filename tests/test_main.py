@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+import urllib3
+from kubernetes.client.rest import ApiException
 from kubernetes.config import ConfigException
 
 import main
@@ -240,3 +242,45 @@ class TestMain:
             main.main()
 
         assert logging.getLogger().level == logging.DEBUG
+
+    def test_api_exception_while_fetching_crds_is_reported_cleanly_with_exit_code_1(
+        self, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+
+        with patch("main.load_config"), \
+             patch("main.get_crd_versions", side_effect=ApiException(status=403, reason="Forbidden")):
+            exit_code = main.main()
+
+        assert exit_code == 1
+        err = capsys.readouterr().err
+        assert "could not reach the Kubernetes API server" in err
+
+    def test_connection_error_while_fetching_crds_is_reported_cleanly_with_exit_code_1(
+        self, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+
+        with patch("main.load_config"), \
+             patch("main.get_crd_versions",
+                   side_effect=urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/apis")):
+            exit_code = main.main()
+
+        assert exit_code == 1
+        err = capsys.readouterr().err
+        assert "could not reach the Kubernetes API server" in err
+
+    def test_api_exception_while_fetching_openshift_resources_is_reported_cleanly(
+        self, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--openshift"])
+
+        with patch("main.load_config"), \
+             patch("main.get_crd_versions", return_value=[]), \
+             patch("main.get_openshift_resource_versions",
+                   side_effect=ApiException(status=500, reason="Internal Server Error")):
+            exit_code = main.main()
+
+        assert exit_code == 1
+        err = capsys.readouterr().err
+        assert "could not reach the Kubernetes API server" in err
