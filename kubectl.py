@@ -8,12 +8,7 @@ from typing import Any, cast
 from kubernetes import client, config
 from kubernetes.client import (
     V1CustomResourceDefinitionList,
-    V1DeploymentList,
-    V2HorizontalPodAutoscalerList,
     V1NamespaceList,
-    V1NetworkPolicyList,
-    V1PodDisruptionBudgetList,
-    V1PodList,
 )
 from kubernetes.client.rest import ApiException
 
