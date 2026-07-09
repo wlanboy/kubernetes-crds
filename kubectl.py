@@ -125,6 +125,10 @@ class CRDVersionedInfo:
     versions: list[CRDVersionInfo] = field(default_factory=list)
     # Versions the API server still has objects persisted as (CRD status.storedVersions).
     stored_versions: list[str] = field(default_factory=list)
+    # spec.conversion.strategy: "None" or "Webhook". Webhook conversion means
+    # reading/writing non-storage versions depends on an external webhook being
+    # reachable — worth flagging separately from the per-version served/storage flags.
+    conversion_strategy: str = "None"
 
     @property
     def total_instances(self) -> int:
@@ -168,6 +172,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             continue
 
         status = getattr(crd, "status", None)
+        conversion = getattr(spec, "conversion", None)
         info = CRDVersionedInfo(
             name=crd.metadata.name,
             group=spec.group,
@@ -175,6 +180,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             plural=spec.names.plural,
             namespaced=is_namespaced,
             stored_versions=list(getattr(status, "stored_versions", None) or []),
+            conversion_strategy=getattr(conversion, "strategy", None) or "None",
         )
 
         for v in (spec.versions or []):

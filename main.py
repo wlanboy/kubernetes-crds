@@ -139,6 +139,7 @@ def main() -> int:
                 crd.group,
                 crd.kind,
                 "Namespaced" if crd.namespaced else "Cluster",
+                crd.conversion_strategy,
                 v.version,
                 "yes" if v.served else "no",
                 "yes" if v.storage else "no",
@@ -152,7 +153,7 @@ def main() -> int:
                 row = (*base, "-", "-") if show_namespace_column else (*base, "-")
                 rows.append(row)
 
-    headers = ("CRD", "GROUP", "KIND", "SCOPE", "VERSION", "SERVED", "STORAGE", "DEPRECATED")
+    headers = ("CRD", "GROUP", "KIND", "SCOPE", "CONVERSION", "VERSION", "SERVED", "STORAGE", "DEPRECATED")
     if show_namespace_column:
         headers += ("NAMESPACE",)
     headers += ("INSTANCES",)

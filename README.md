@@ -1,7 +1,7 @@
 # kubernetes-crds
 
 Dieses Tool dient dazu, die CustomResourceDefinitions (CRDs) eines Kubernetes-Clusters zu erfassen und auszuwerten. Es listet alle CRDs samt ihrer API-Versionen auf.
-In einer Tabelle wird gezeigt, welche Version jeweils "served" bzw. "storage" ist, und ermittelt die Anzahl der tatsächlich existierenden Instanzen je Namespace (bzw. clusterweit bei cluster-scoped CRDs). 
+In einer Tabelle wird gezeigt, welche Version jeweils "served" bzw. "storage" ist, ob die CRD eine `Webhook`-Konversionsstrategie verwendet (`spec.conversion.strategy`), und ermittelt die Anzahl der tatsächlich existierenden Instanzen je Namespace (bzw. clusterweit bei cluster-scoped CRDs). 
 Dadurch lässt sich nicht nur nachvollziehen, welche CRDs im Cluster installiert sind und wie sie genutzt werden, sondern auch, welche CRDs keine oder kaum Instanzen besitzen – also ungenutzte oder veraltete CRDs, die Kandidaten für eine Bereinigung sind.
 
 ## Installation
@@ -47,6 +47,13 @@ python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-veri
 
 Bei fehlender oder ungültiger kubeconfig bricht das Tool mit einer klaren
 Fehlermeldung und Exitcode 1 ab, statt einen rohen Stacktrace auszugeben.
+
+Die Spalte **CONVERSION** zeigt `Webhook`, wenn die CRD auf einen Konversions-
+Webhook angewiesen ist, um zwischen ihren Versionen zu übersetzen (statt `None`
+für keine Konversion). Ist der Webhook-Service nicht erreichbar oder
+fehlkonfiguriert, schlagen API-Zugriffe auf nicht-Storage-Versionen fehl, auch
+wenn diese laut `served: true` eigentlich verfügbar sein sollten – ein Punkt,
+den diese Tabelle allein nicht prüfen kann, aber zumindest sichtbar macht.
 
 Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutreffend:
 
