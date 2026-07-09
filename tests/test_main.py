@@ -8,18 +8,23 @@ from kubectl import CRDVersionedInfo, CRDVersionInfo
 
 
 def _version(version: str, served: bool = True, storage: bool = True,
-             instances: dict[str, int] | None = None) -> CRDVersionInfo:
-    v = CRDVersionInfo(version=version, served=served, storage=storage)
+             instances: dict[str, int] | None = None, deprecated: bool = False,
+             deprecation_warning: str | None = None) -> CRDVersionInfo:
+    v = CRDVersionInfo(version=version, served=served, storage=storage,
+                        deprecated=deprecated, deprecation_warning=deprecation_warning)
     if instances:
         v.instances_by_namespace = instances
     return v
 
 
 def _crd_info(name: str, group: str, kind: str, namespaced: bool,
-              versions: list[CRDVersionInfo]) -> CRDVersionedInfo:
+              versions: list[CRDVersionInfo],
+              stored_versions: list[str] | None = None) -> CRDVersionedInfo:
     return CRDVersionedInfo(
         name=name, group=group, kind=kind, plural=name.split(".")[0],
         namespaced=namespaced, versions=versions,
+        stored_versions=stored_versions if stored_versions is not None
+        else [v.version for v in versions if v.storage],
     )
 
 
@@ -133,3 +138,82 @@ class TestMain:
         out = capsys.readouterr().out
         rows = [line for line in out.splitlines() if "widgets.example.io" in line]
         assert len(rows) == 2
+
+    def test_deprecated_column_shows_yes_for_deprecated_version(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1alpha1", storage=False, deprecated=True,
+                                     deprecation_warning="use v1 instead"),
+                            _version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "DEPRECATED" in out
+        alpha_row = next(line for line in out.splitlines() if "v1alpha1" in line)
+        stable_row = next(line for line in out.splitlines()
+                           if "v1" in line.split() and "v1alpha1" not in line)
+        assert alpha_row.split()[7] == "yes"
+        assert stable_row.split()[7] == "no"
+
+    def test_deprecation_warning_is_printed_below_the_table(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1alpha1", storage=False, deprecated=True,
+                                     deprecation_warning="use v1 instead"),
+                            _version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Deprecated API versions:" in out
+        assert "widgets.example.io v1alpha1: use v1 instead" in out
+
+    def test_no_deprecation_section_when_nothing_is_deprecated(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Deprecated API versions:" not in out
+
+    def test_migration_candidate_is_printed_when_old_stored_version_remains(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1alpha1", storage=False), _version("v1")],
+                           stored_versions=["v1alpha1", "v1"])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Storage version migration candidates" in out
+        assert "widgets.example.io: instances still stored as ['v1alpha1']" in out
+
+    def test_no_migration_section_when_stored_versions_are_up_to_date(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Storage version migration candidates" not in out
+
+    def test_unused_view_also_reports_migration_candidates(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1alpha1", storage=False),
+                            _version("v1", instances={"ns-a": 1})],
+                           stored_versions=["v1alpha1", "v1"])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "No unused CRDs found." in out
+        assert "Storage version migration candidates" in out

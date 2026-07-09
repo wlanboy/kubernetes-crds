@@ -13,15 +13,27 @@ def _ns(name: str, labels: dict[str, str] | None = None) -> SimpleNamespace:
 
 
 def _crd(name: str, group: str, kind: str, plural: str, scope: str,
-         versions: list[tuple[str, bool, bool]]) -> SimpleNamespace:
+         versions: list[tuple[str, bool, bool] | tuple[str, bool, bool, bool, str | None]],
+         stored_versions: list[str] | None = None) -> SimpleNamespace:
+    version_objs = [
+        SimpleNamespace(
+            name=v[0], served=v[1], storage=v[2],
+            deprecated=v[3] if len(v) > 3 else False,
+            deprecation_warning=v[4] if len(v) > 4 else None,
+        )
+        for v in versions
+    ]
     return SimpleNamespace(
         metadata=SimpleNamespace(name=name),
         spec=SimpleNamespace(
             group=group,
             scope=scope,
             names=SimpleNamespace(kind=kind, plural=plural),
-            versions=[SimpleNamespace(name=v, served=served, storage=storage)
-                      for v, served, storage in versions],
+            versions=version_objs,
+        ),
+        status=SimpleNamespace(
+            stored_versions=stored_versions if stored_versions is not None
+            else [v.name for v in version_objs if v.storage],
         ),
     )
 
@@ -299,3 +311,57 @@ class TestGetCrdVersions:
             result = kubectl.get_crd_versions(namespace="ns-a")
 
         assert [r.group for r in result] == ["agroup.io", "bgroup.io"]
+
+    def test_deprecated_flag_and_warning_are_carried_over_from_the_crd_version(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1alpha1", True, False, True, "use v1 instead"), ("v1", True, True)])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        [alpha, stable] = result[0].versions
+        assert alpha.deprecated is True
+        assert alpha.deprecation_warning == "use v1 instead"
+        assert stable.deprecated is False
+        assert stable.deprecation_warning is None
+
+
+class TestStorageVersionMigration:
+    def test_no_pending_migration_when_stored_versions_match_storage_version(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1alpha1", True, False), ("v1", True, True)],
+                    stored_versions=["v1"])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].storage_version == "v1"
+        assert result[0].pending_migration_versions == []
+
+    def test_old_stored_version_is_reported_as_pending_migration(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1alpha1", True, False), ("v1", True, True)],
+                    stored_versions=["v1alpha1", "v1"])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].pending_migration_versions == ["v1alpha1"]
