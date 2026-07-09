@@ -4,6 +4,26 @@ Dieses Tool dient dazu, die CustomResourceDefinitions (CRDs) eines Kubernetes-Cl
 In einer Tabelle wird gezeigt, welche Version jeweils "served" bzw. "storage" ist, und ermittelt die Anzahl der tatsächlich existierenden Instanzen je Namespace (bzw. clusterweit bei cluster-scoped CRDs). 
 Dadurch lässt sich nicht nur nachvollziehen, welche CRDs im Cluster installiert sind und wie sie genutzt werden, sondern auch, welche CRDs keine oder kaum Instanzen besitzen – also ungenutzte oder veraltete CRDs, die Kandidaten für eine Bereinigung sind.
 
+## Installation
+
+Voraussetzung: Python >= 3.14 sowie ein gültiger kubeconfig-Kontext (`~/.kube/config` bzw. In-Cluster-Config).
+
+Mit [uv](https://docs.astral.sh/uv/):
+
+```
+uv sync
+uv run python main.py
+```
+
+Mit `pip` (z.B. in einem virtuellen Environment):
+
+```
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python main.py
+```
+
 ## Verwendung
 
 ```
