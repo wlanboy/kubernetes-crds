@@ -188,6 +188,10 @@ class CRDVersionedInfo:
     namespaced: bool
     versions: list[CRDVersionInfo] = field(default_factory=list)
 
+    @property
+    def total_instances(self) -> int:
+        return sum(v.total_instances for v in self.versions)
+
 
 def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
     """List every CRD together with all of its API versions and, per served
