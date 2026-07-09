@@ -34,12 +34,14 @@ def _discover_group_version_resources(api_client: client.ApiClient, group: str,
             "tuple[dict[str, Any], int, dict[str, str]]",
             api_client.call_api(
                 f"/apis/{group}/{version}", "GET",
-                auth_settings=["BearerToken"], response_types_map={"200": "object"},
+                auth_settings=["BearerToken"], response_types_map={200: "object"},
             ),
         )
     except ApiException:
         return []
     body = resp[0]
+    if body is None:
+        return []
     # Skip subresources such as "routes/status".
     return [r for r in body.get("resources", []) if "/" not in r.get("name", "")]
 

@@ -46,6 +46,28 @@ class TestDiscoverGroupVersionResources:
 
         assert [r["name"] for r in result] == ["routes"]
 
+    def test_response_types_map_uses_integer_status_code(self):
+        # api_client.call_api looks up response_types_map by the *integer*
+        # HTTP status code internally (response_types_map.get(response.status)).
+        # A string key like {"200": ...} silently misses and yields a None body.
+        api_client = MagicMock()
+        api_client.call_api.return_value = ({"resources": []}, 200, {})
+
+        oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        kwargs = api_client.call_api.call_args.kwargs
+        assert kwargs["response_types_map"] == {200: "object"}
+
+    def test_none_body_is_treated_as_no_resources(self):
+        # Mirrors what the real client returns when response_types_map doesn't
+        # match the response status: body comes back as None instead of a dict.
+        api_client = MagicMock()
+        api_client.call_api.return_value = (None, 200, {})
+
+        result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        assert result == []
+
     def test_api_exception_returns_empty_list(self):
         api_client = MagicMock()
         api_client.call_api.side_effect = ApiException(status=403)
