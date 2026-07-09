@@ -73,7 +73,7 @@ class TestLoadConfig:
 
 
 class TestGetNamespaces:
-    def test_returns_namespace_info_and_defaults_missing_labels_to_empty_dict(self):
+    def test_returns_namespace_names(self):
         fake_v1 = MagicMock()
         fake_v1.list_namespace.return_value = SimpleNamespace(items=[
             _ns("default", {"team": "platform"}),
@@ -83,21 +83,7 @@ class TestGetNamespaces:
         with patch("kubectl.client.CoreV1Api", return_value=fake_v1):
             result = kubectl.get_namespaces()
 
-        assert [n.name for n in result] == ["default", "kube-system"]
-        assert result[0].labels == {"team": "platform"}
-        assert result[1].labels == {}
-
-
-class TestStorageVersion:
-    def test_returns_the_version_flagged_as_storage(self):
-        crd = _crd("x.example.io", "example.io", "X", "xs", "Namespaced",
-                    [("v1alpha1", True, False), ("v1", True, True)])
-        assert kubectl._storage_version(crd) == "v1"
-
-    def test_falls_back_to_first_version_when_none_is_storage(self):
-        crd = _crd("x.example.io", "example.io", "X", "xs", "Namespaced",
-                    [("v1beta1", True, False)])
-        assert kubectl._storage_version(crd) == "v1beta1"
+        assert result == ["default", "kube-system"]
 
 
 class TestCustomList:
@@ -118,81 +104,6 @@ class TestCustomList:
             group="g", version="v1", plural="things",
         )
         custom.list_namespaced_custom_object.assert_not_called()
-
-
-class TestGetCrdStats:
-    def test_counts_instances_per_namespace_for_namespaced_crd(self):
-        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
-                    [("v1", True, True)])
-        ext = MagicMock()
-        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
-
-        custom = MagicMock()
-
-        def list_namespaced(group, version, namespace, plural):
-            return {"items": [{}, {}]} if namespace == "ns-a" else {"items": []}
-
-        custom.list_namespaced_custom_object.side_effect = list_namespaced
-
-        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
-             patch("kubectl.client.CustomObjectsApi", return_value=custom):
-            stats = kubectl.get_crd_stats(["ns-a", "ns-b"])
-
-        assert len(stats) == 1
-        assert stats[0].instances_by_namespace == {"ns-a": 2}
-        assert stats[0].total_instances == 2
-
-    def test_cluster_scoped_crd_uses_pseudo_namespace(self):
-        crd = _crd("clusterwidgets.example.io", "example.io", "ClusterWidget",
-                    "clusterwidgets", "Cluster", [("v1", True, True)])
-        ext = MagicMock()
-        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
-
-        custom = MagicMock()
-        custom.list_cluster_custom_object.return_value = {"items": [{}]}
-
-        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
-             patch("kubectl.client.CustomObjectsApi", return_value=custom):
-            stats = kubectl.get_crd_stats([])
-
-        assert stats[0].instances_by_namespace == {"(cluster)": 1}
-
-    def test_crd_without_any_instances_is_excluded(self):
-        crd = _crd("empty.example.io", "example.io", "Empty", "empties", "Namespaced",
-                    [("v1", True, True)])
-        ext = MagicMock()
-        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
-
-        custom = MagicMock()
-        custom.list_namespaced_custom_object.return_value = {"items": []}
-
-        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
-             patch("kubectl.client.CustomObjectsApi", return_value=custom):
-            stats = kubectl.get_crd_stats(["ns-a"])
-
-        assert stats == []
-
-    def test_results_sorted_by_total_instances_descending(self):
-        small = _crd("small.example.io", "example.io", "Small", "smalls", "Namespaced",
-                      [("v1", True, True)])
-        big = _crd("big.example.io", "example.io", "Big", "bigs", "Namespaced",
-                    [("v1", True, True)])
-        ext = MagicMock()
-        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[small, big])
-
-        custom = MagicMock()
-
-        def list_namespaced(group, version, namespace, plural):
-            count = 1 if plural == "smalls" else 5
-            return {"items": [{}] * count}
-
-        custom.list_namespaced_custom_object.side_effect = list_namespaced
-
-        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
-             patch("kubectl.client.CustomObjectsApi", return_value=custom):
-            stats = kubectl.get_crd_stats(["ns-a"])
-
-        assert [s.name for s in stats] == ["big.example.io", "small.example.io"]
 
 
 class TestGetCrdVersions:

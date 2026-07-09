@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
+
+from kubernetes.config import ConfigException
 
 from kubectl import CRDVersionedInfo, get_crd_versions, load_config
 from oc import get_openshift_resource_versions
@@ -74,9 +77,25 @@ def main() -> int:
         help="Disable TLS certificate verification against the API server "
              "(equivalent to kubectl/oc --insecure-skip-tls-verify).",
     )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable debug logging, e.g. for API calls that were skipped due to errors.",
+    )
     args = parser.parse_args()
 
-    load_config(verify_ssl=not args.insecure_skip_tls_verify)
+    logging.basicConfig(
+        level=logging.DEBUG if args.verbose else logging.WARNING,
+        format="%(levelname)s %(name)s: %(message)s",
+        force=True,
+    )
+
+    try:
+        load_config(verify_ssl=not args.insecure_skip_tls_verify)
+    except ConfigException as e:
+        print(f"Error: could not load Kubernetes configuration: {e}", file=sys.stderr)
+        return 1
+
     crds = get_crd_versions(namespace=args.namespace)
 
     if args.openshift:

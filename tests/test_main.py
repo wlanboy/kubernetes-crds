@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from unittest.mock import patch
 
+from kubernetes.config import ConfigException
+
 import main
 from kubectl import CRDVersionedInfo, CRDVersionInfo
 
@@ -217,3 +219,24 @@ class TestMain:
         out = capsys.readouterr().out
         assert "No unused CRDs found." in out
         assert "Storage version migration candidates" in out
+
+    def test_config_exception_is_reported_cleanly_with_exit_code_1(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+
+        with patch("main.load_config", side_effect=ConfigException("no kubeconfig found")):
+            exit_code = main.main()
+
+        assert exit_code == 1
+        err = capsys.readouterr().err
+        assert "could not load Kubernetes configuration" in err
+        assert "no kubeconfig found" in err
+
+    def test_verbose_flag_enables_debug_logging(self, monkeypatch):
+        import logging
+
+        monkeypatch.setattr(sys, "argv", ["main.py", "--verbose"])
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=[]):
+            main.main()
+
+        assert logging.getLogger().level == logging.DEBUG

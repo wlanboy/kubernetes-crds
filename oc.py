@@ -3,6 +3,7 @@ DeploymentConfig, ...) that live in *.openshift.io API groups rather than as
 CustomResourceDefinitions, so they never show up in list_custom_resource_definition()."""
 from __future__ import annotations
 
+import logging
 from typing import Any, cast
 
 from kubernetes import client
@@ -16,6 +17,8 @@ from kubectl import (
     _custom_list,
     get_namespaces,
 )
+
+logger = logging.getLogger(__name__)
 
 _OPENSHIFT_GROUP_SUFFIX = ".openshift.io"
 
@@ -43,7 +46,8 @@ def _discover_group_version_resources(api_client: client.ApiClient, group: str,
                 auth_settings=["BearerToken"], response_types_map={200: "object"},
             ),
         )
-    except ApiException:
+    except ApiException as e:
+        logger.debug("Discovery failed for %s/%s: %s", group, version, e.reason)
         return []
     body = resp[0]
     if body is None:
@@ -57,9 +61,7 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
     custom = client.CustomObjectsApi()
     api_client = client.ApiClient()
 
-    namespaces_to_scan = [namespace] if namespace is not None else [
-        ns.name for ns in get_namespaces()
-    ]
+    namespaces_to_scan = [namespace] if namespace is not None else get_namespaces()
 
     result: list[CRDVersionedInfo] = []
 
@@ -93,8 +95,10 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
                     count = len(resp.get("items", []))
                     if count:
                         vinfo.instances_by_namespace["(cluster)"] = count
-                except ApiException:
-                    pass
+                except ApiException as e:
+                    logger.debug(
+                        "Failed to list %s/%s %s (cluster-scoped): %s", group, version, plural, e.reason,
+                    )
 
             info.versions.append(vinfo)
             result.append(info)

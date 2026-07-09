@@ -48,45 +48,18 @@ def load_config(*, verify_ssl: bool = True) -> None:
 # Data models
 # ---------------------------------------------------------------------------
 
-@dataclass
-class NamespaceInfo:
-    name: str
-    labels: dict[str, str]
-
-
-@dataclass
-class CRDStat:
-    name: str           # e.g. certificates.cert-manager.io
-    group: str
-    kind: str
-    plural: str
-    namespaced: bool
-    instances_by_namespace: dict[str, int] = field(default_factory=dict)
-
-    @property
-    def total_instances(self) -> int:
-        return sum(self.instances_by_namespace.values())
-
-    @property
-    def namespace_count(self) -> int:
-        return sum(1 for v in self.instances_by_namespace.values() if v > 0)
-
-
 # ---------------------------------------------------------------------------
 # Namespace listing
 # ---------------------------------------------------------------------------
 
-def get_namespaces() -> list[NamespaceInfo]:
+def get_namespaces() -> list[str]:
     v1 = client.CoreV1Api()
     ns_list = cast(V1NamespaceList, v1.list_namespace())
-    return [
-        NamespaceInfo(name=ns.metadata.name, labels=ns.metadata.labels or {})
-        for ns in (ns_list.items or [])
-    ]
+    return [ns.metadata.name for ns in (ns_list.items or [])]
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers (used by CRD stats, adoption, and kubectl_istio)
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 def _custom_list(custom: client.CustomObjectsApi, *, group: str, version: str,
@@ -102,20 +75,6 @@ def _custom_list(custom: client.CustomObjectsApi, *, group: str, version: str,
     return cast(dict[str, Any], result)
 
 
-def _count_custom(custom: client.CustomObjectsApi, group: str, versions: list[str],
-                  namespace: str, plural: str) -> int:
-    for version in versions:
-        try:
-            result = _custom_list(
-                custom, group=group, version=version, namespace=namespace, plural=plural,
-            )
-            return len(result.get("items", []))
-        except ApiException as e:
-            if e.status == 404:
-                continue
-    return 0
-
-
 def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str, version: str,
                                   plural: str, namespaces: list[str]) -> dict[str, int]:
     """Count group/version/plural instances across namespaces concurrently."""
@@ -126,65 +85,16 @@ def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str
         try:
             resp = _custom_list(custom, group=group, version=version, namespace=ns, plural=plural)
             return ns, len(resp.get("items", []))
-        except ApiException:
+        except ApiException as e:
+            logger.debug(
+                "Failed to list %s/%s %s in namespace %s: %s", group, version, plural, ns, e.reason,
+            )
             return ns, 0
 
     with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(namespaces))) as pool:
         results = pool.map(_count, namespaces)
 
     return {ns: count for ns, count in results if count}
-
-
-# ---------------------------------------------------------------------------
-# CRD statistics
-# ---------------------------------------------------------------------------
-
-def _storage_version(crd: Any) -> str:
-    for v in crd.spec.versions:
-        if getattr(v, "storage", False):
-            return v.name  # type: ignore[no-any-return]
-    return crd.spec.versions[0].name if crd.spec.versions else "v1"  # type: ignore[no-any-return]
-
-
-def get_crd_stats(namespace_names: list[str]) -> list[CRDStat]:
-    ext = client.ApiextensionsV1Api()
-    custom = client.CustomObjectsApi()
-
-    crd_list = cast(V1CustomResourceDefinitionList, ext.list_custom_resource_definition())
-    stats: list[CRDStat] = []
-
-    for crd in (crd_list.items or []):
-        spec = crd.spec
-        version = _storage_version(crd)
-        stat = CRDStat(
-            name=crd.metadata.name,
-            group=spec.group,
-            kind=spec.names.kind,
-            plural=spec.names.plural,
-            namespaced=spec.scope == "Namespaced",
-        )
-
-        if stat.namespaced:
-            stat.instances_by_namespace = _count_instances_by_namespace(
-                custom, group=spec.group, version=version,
-                plural=spec.names.plural, namespaces=namespace_names,
-            )
-        else:
-            try:
-                result = _custom_list(
-                    custom, group=spec.group, version=version,
-                    namespace=None, plural=spec.names.plural,
-                )
-                count = len(result.get("items", []))
-                if count:
-                    stat.instances_by_namespace["(cluster)"] = count
-            except ApiException:
-                pass
-
-        if stat.total_instances > 0:
-            stats.append(stat)
-
-    return sorted(stats, key=lambda s: s.total_instances, reverse=True)
 
 
 # ---------------------------------------------------------------------------
@@ -245,9 +155,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
     ext = client.ApiextensionsV1Api()
     custom = client.CustomObjectsApi()
 
-    namespaces_to_scan = [namespace] if namespace is not None else [
-        ns.name for ns in get_namespaces()
-    ]
+    namespaces_to_scan = [namespace] if namespace is not None else get_namespaces()
 
     crd_list = cast(V1CustomResourceDefinitionList, ext.list_custom_resource_definition())
     result: list[CRDVersionedInfo] = []
@@ -291,8 +199,11 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
                         count = len(resp.get("items", []))
                         if count:
                             vinfo.instances_by_namespace["(cluster)"] = count
-                    except ApiException:
-                        pass
+                    except ApiException as e:
+                        logger.debug(
+                            "Failed to list %s/%s %s (cluster-scoped): %s",
+                            spec.group, v.name, spec.names.plural, e.reason,
+                        )
 
             info.versions.append(vinfo)
 
