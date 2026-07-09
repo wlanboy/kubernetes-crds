@@ -96,6 +96,32 @@ class TestMain:
         row = next(line for line in out.splitlines() if "widgets.example.io" in line)
         assert row.split()[-1] == "-"
 
+    def test_unused_flag_lists_only_crds_without_instances(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [
+            _crd_info("widgets.example.io", "example.io", "Widget", True,
+                      [_version("v1", instances={"ns-a": 2})]),
+            _crd_info("gadgets.example.io", "example.io", "Gadget", True, [_version("v1")]),
+        ]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "gadgets.example.io" in out
+        assert "widgets.example.io" not in out
+
+    def test_unused_flag_prints_message_when_none_unused(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", instances={"ns-a": 2})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            exit_code = main.main()
+
+        assert exit_code == 0
+        assert "No unused CRDs found." in capsys.readouterr().out
+
     def test_each_namespace_with_instances_gets_its_own_row(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])
         crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,

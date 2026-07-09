@@ -32,6 +32,11 @@ def main() -> int:
         help="Only inspect this namespace (default: scan all namespaces; "
              "cluster-scoped CRDs are only shown when this is omitted).",
     )
+    parser.add_argument(
+        "--unused",
+        action="store_true",
+        help="Only list CRDs that have no instances in any version/namespace.",
+    )
     args = parser.parse_args()
 
     load_config()
@@ -39,6 +44,20 @@ def main() -> int:
 
     if not crds:
         print("No CRDs found.")
+        return 0
+
+    if args.unused:
+        unused_crds = [crd for crd in crds if crd.total_instances == 0]
+        if not unused_crds:
+            print("No unused CRDs found.")
+            return 0
+
+        rows = [
+            (crd.name, crd.group, crd.kind, "Namespaced" if crd.namespaced else "Cluster")
+            for crd in unused_crds
+        ]
+        headers = ("CRD", "GROUP", "KIND", "SCOPE")
+        print(_format_table(rows, headers))
         return 0
 
     show_namespace_column = args.namespace is None
