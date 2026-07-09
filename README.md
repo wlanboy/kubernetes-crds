@@ -7,11 +7,16 @@ Dadurch lässt sich nicht nur nachvollziehen, welche CRDs im Cluster installiert
 ## Verwendung
 
 ```
-python main.py [-n NAMESPACE] [--unused]
+python main.py [-n NAMESPACE] [--unused] [--openshift]
 ```
 
 - `-n, --namespace NAMESPACE`: Beschränkt die Auswertung auf einen Namespace
   (ohne Angabe werden alle Namespaces sowie cluster-scoped CRDs erfasst).
 - `--unused`: Listet nur die CRDs auf, die in keiner Version/keinem Namespace
   Instanzen besitzen – praktisch, um Kandidaten für eine Bereinigung zu finden.
+- `--openshift`: Bezieht zusätzlich OpenShift-spezifische API-Ressourcen mit ein
+  (z.B. `Route`, `BuildConfig`, `DeploymentConfig`), die als eingebaute
+  aggregierte APIs in `*.openshift.io`-Gruppen laufen und daher keine
+  CustomResourceDefinitions sind (siehe [oc.py](oc.py)). Ohne diesen Schalter
+  tauchen sie nicht in der Auswertung auf.
 
