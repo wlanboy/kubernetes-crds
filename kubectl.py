@@ -101,6 +101,39 @@ def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str
 # CRD listing across all versions
 # ---------------------------------------------------------------------------
 
+# Well-known labels/annotations that GitOps/package tools stamp onto objects
+# they manage, checked in this order. Presence (not value) is the signal.
+_OWNERSHIP_LABELS: tuple[tuple[str, str], ...] = (
+    ("olm.owner", "OLM"),
+    ("kustomize.toolkit.fluxcd.io/name", "Flux"),
+    ("helm.toolkit.fluxcd.io/name", "Flux"),
+    ("argocd.argoproj.io/instance", "ArgoCD"),
+)
+_OWNERSHIP_ANNOTATIONS: tuple[tuple[str, str], ...] = (
+    ("meta.helm.sh/release-name", "Helm"),
+    ("argocd.argoproj.io/tracking-id", "ArgoCD"),
+)
+
+
+def _detect_owner(labels: dict[str, str] | None, annotations: dict[str, str] | None) -> str | None:
+    """Best-effort guess at which tool manages this object, based on the
+    ownership labels/annotations that Helm, ArgoCD, Flux and OLM stamp onto
+    objects they manage. Falls back to the generic
+    ``app.kubernetes.io/managed-by`` label if none of the tool-specific
+    markers are present. Returns ``None`` if nothing is found."""
+    labels = labels or {}
+    annotations = annotations or {}
+
+    for key, owner in _OWNERSHIP_LABELS:
+        if key in labels:
+            return owner
+    for key, owner in _OWNERSHIP_ANNOTATIONS:
+        if key in annotations:
+            return owner
+
+    return labels.get("app.kubernetes.io/managed-by")
+
+
 @dataclass
 class CRDVersionInfo:
     version: str
@@ -129,6 +162,10 @@ class CRDVersionedInfo:
     # reading/writing non-storage versions depends on an external webhook being
     # reachable — worth flagging separately from the per-version served/storage flags.
     conversion_strategy: str = "None"
+    # Best-effort guess at the managing tool (Helm, ArgoCD, Flux, OLM, ...),
+    # from ownership labels/annotations on the CRD object. None if undetected —
+    # useful before deleting an "unused" CRD to see whether something still owns it.
+    owner: str | None = None
 
     @property
     def total_instances(self) -> int:
@@ -181,6 +218,9 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             namespaced=is_namespaced,
             stored_versions=list(getattr(status, "stored_versions", None) or []),
             conversion_strategy=getattr(conversion, "strategy", None) or "None",
+            owner=_detect_owner(
+                getattr(crd.metadata, "labels", None), getattr(crd.metadata, "annotations", None),
+            ),
         )
 
         for v in (spec.versions or []):

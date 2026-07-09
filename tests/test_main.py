@@ -24,13 +24,15 @@ def _version(version: str, served: bool = True, storage: bool = True,
 def _crd_info(name: str, group: str, kind: str, namespaced: bool,
               versions: list[CRDVersionInfo],
               stored_versions: list[str] | None = None,
-              conversion_strategy: str = "None") -> CRDVersionedInfo:
+              conversion_strategy: str = "None",
+              owner: str | None = None) -> CRDVersionedInfo:
     return CRDVersionedInfo(
         name=name, group=group, kind=kind, plural=name.split(".")[0],
         namespaced=namespaced, versions=versions,
         stored_versions=stored_versions if stored_versions is not None
         else [v.version for v in versions if v.storage],
         conversion_strategy=conversion_strategy,
+        owner=owner,
     )
 
 
@@ -160,8 +162,8 @@ class TestMain:
         alpha_row = next(line for line in out.splitlines() if "v1alpha1" in line)
         stable_row = next(line for line in out.splitlines()
                            if "v1" in line.split() and "v1alpha1" not in line)
-        assert alpha_row.split()[8] == "yes"
-        assert stable_row.split()[8] == "no"
+        assert alpha_row.split()[9] == "yes"
+        assert stable_row.split()[9] == "no"
 
     def test_conversion_column_shows_webhook_strategy(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])
@@ -186,6 +188,43 @@ class TestMain:
         out = capsys.readouterr().out
         row = next(line for line in out.splitlines() if "widgets.example.io" in line)
         assert row.split()[4] == "None"
+
+    def test_owner_column_shows_detected_owner(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1")], owner="Helm")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "OWNER" in out
+        row = next(line for line in out.splitlines() if "widgets.example.io" in line)
+        assert row.split()[5] == "Helm"
+
+    def test_owner_column_shows_dash_when_undetected(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        row = next(line for line in out.splitlines() if "widgets.example.io" in line)
+        assert row.split()[5] == "-"
+
+    def test_unused_table_shows_owner_column(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("gadgets.example.io", "example.io", "Gadget", True,
+                           [_version("v1")], owner="ArgoCD")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "OWNER" in out
+        row = next(line for line in out.splitlines() if "gadgets.example.io" in line)
+        assert row.split()[-1] == "ArgoCD"
 
     def test_deprecation_warning_is_printed_below_the_table(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])

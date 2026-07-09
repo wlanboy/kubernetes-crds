@@ -119,10 +119,11 @@ def main() -> int:
             print("No unused CRDs found.")
         else:
             rows = [
-                (crd.name, crd.group, crd.kind, "Namespaced" if crd.namespaced else "Cluster")
+                (crd.name, crd.group, crd.kind, "Namespaced" if crd.namespaced else "Cluster",
+                 crd.owner or "-")
                 for crd in unused_crds
             ]
-            headers = ("CRD", "GROUP", "KIND", "SCOPE")
+            headers = ("CRD", "GROUP", "KIND", "SCOPE", "OWNER")
             print(_format_table(rows, headers))
 
         _print_deprecation_warnings(crds)
@@ -140,6 +141,7 @@ def main() -> int:
                 crd.kind,
                 "Namespaced" if crd.namespaced else "Cluster",
                 crd.conversion_strategy,
+                crd.owner or "-",
                 v.version,
                 "yes" if v.served else "no",
                 "yes" if v.storage else "no",
@@ -153,7 +155,10 @@ def main() -> int:
                 row = (*base, "-", "-") if show_namespace_column else (*base, "-")
                 rows.append(row)
 
-    headers = ("CRD", "GROUP", "KIND", "SCOPE", "CONVERSION", "VERSION", "SERVED", "STORAGE", "DEPRECATED")
+    headers = (
+        "CRD", "GROUP", "KIND", "SCOPE", "CONVERSION", "OWNER",
+        "VERSION", "SERVED", "STORAGE", "DEPRECATED",
+    )
     if show_namespace_column:
         headers += ("NAMESPACE",)
     headers += ("INSTANCES",)

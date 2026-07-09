@@ -55,6 +55,25 @@ fehlkonfiguriert, schlagen API-Zugriffe auf nicht-Storage-Versionen fehl, auch
 wenn diese laut `served: true` eigentlich verfügbar sein sollten – ein Punkt,
 den diese Tabelle allein nicht prüfen kann, aber zumindest sichtbar macht.
 
+Die Spalte **OWNER** ist ein Best-Effort-Hinweis darauf, welches Tool die CRD
+verwaltet – ermittelt anhand bekannter Ownership-Labels/-Annotations auf dem
+CRD-Objekt selbst:
+
+- `Helm` – Annotation `meta.helm.sh/release-name`
+- `ArgoCD` – Label `argocd.argoproj.io/instance` oder Annotation
+  `argocd.argoproj.io/tracking-id`
+- `Flux` – Label `kustomize.toolkit.fluxcd.io/name` oder
+  `helm.toolkit.fluxcd.io/name`
+- `OLM` – Label `olm.owner`
+- Fallback: der Wert des generischen Labels `app.kubernetes.io/managed-by`
+  (z.B. `Terraform`, `Pulumi`, ...), falls keiner der obigen Marker vorhanden ist
+
+Ohne Treffer wird `-` angezeigt. Besonders in Kombination mit `--unused`
+nützlich: Bevor eine ungenutzte CRD manuell gelöscht wird, zeigt die Spalte,
+ob sie eigentlich von Helm/ArgoCD/Flux/OLM verwaltet wird und ein manuelles
+Löschen beim nächsten Sync/Upgrade wieder rückgängig gemacht (oder als Drift
+erkannt) würde.
+
 Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutreffend:
 
 - **Deprecated API versions**: Alle CRD-Versionen, die per `spec.versions[].deprecated`

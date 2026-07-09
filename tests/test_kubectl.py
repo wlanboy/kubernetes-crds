@@ -15,7 +15,9 @@ def _ns(name: str, labels: dict[str, str] | None = None) -> SimpleNamespace:
 def _crd(name: str, group: str, kind: str, plural: str, scope: str,
          versions: list[tuple[str, bool, bool] | tuple[str, bool, bool, bool, str | None]],
          stored_versions: list[str] | None = None,
-         conversion_strategy: str | None = None) -> SimpleNamespace:
+         conversion_strategy: str | None = None,
+         labels: dict[str, str] | None = None,
+         annotations: dict[str, str] | None = None) -> SimpleNamespace:
     version_objs = [
         SimpleNamespace(
             name=v[0], served=v[1], storage=v[2],
@@ -25,7 +27,7 @@ def _crd(name: str, group: str, kind: str, plural: str, scope: str,
         for v in versions
     ]
     return SimpleNamespace(
-        metadata=SimpleNamespace(name=name),
+        metadata=SimpleNamespace(name=name, labels=labels, annotations=annotations),
         spec=SimpleNamespace(
             group=group,
             scope=scope,
@@ -277,6 +279,65 @@ class TestGetCrdVersions:
             result = kubectl.get_crd_versions(namespace="ns-a")
 
         assert result[0].conversion_strategy == "None"
+
+    def test_owner_defaults_to_none_when_no_ownership_markers_present(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].owner is None
+
+    def test_owner_detected_from_helm_release_annotation(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)],
+                    annotations={"meta.helm.sh/release-name": "my-release"})
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].owner == "Helm"
+
+    def test_owner_detected_from_generic_managed_by_label_as_fallback(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)],
+                    labels={"app.kubernetes.io/managed-by": "Terraform"})
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].owner == "Terraform"
+
+
+class TestOwnerDetection:
+    def test_tool_specific_label_takes_precedence_over_generic_managed_by(self):
+        owner = kubectl._detect_owner(
+            {"olm.owner": "my-csv", "app.kubernetes.io/managed-by": "Helm"}, None,
+        )
+        assert owner == "OLM"
+
+    def test_no_markers_returns_none(self):
+        assert kubectl._detect_owner(None, None) is None
+        assert kubectl._detect_owner({}, {}) is None
 
 
 class TestStorageVersionMigration:
