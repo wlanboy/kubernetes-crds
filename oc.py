@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from kubernetes import client
+from kubernetes.client import V1APIGroupList
 from kubernetes.client.rest import ApiException
 
 from kubectl import CRDVersionedInfo, CRDVersionInfo, _custom_list, get_namespaces
@@ -16,7 +17,7 @@ _OPENSHIFT_GROUP_SUFFIX = ".openshift.io"
 def _list_openshift_group_versions() -> list[tuple[str, str]]:
     """Return (group, preferred_version) for every installed *.openshift.io API group."""
     apis_api = client.ApisApi()
-    group_list = apis_api.get_api_versions()
+    group_list = cast(V1APIGroupList, apis_api.get_api_versions())
     return [
         (group.name, group.preferred_version.version)
         for group in (group_list.groups or [])
@@ -29,13 +30,16 @@ def _discover_group_version_resources(api_client: client.ApiClient, group: str,
     """Raw discovery call for /apis/{group}/{version} — the resource list (Kind, plural
     name, namespaced) isn't modeled by the generated client since it's cluster-specific."""
     try:
-        resp = api_client.call_api(
-            f"/apis/{group}/{version}", "GET",
-            auth_settings=["BearerToken"], response_types_map={"200": "object"},
+        resp = cast(
+            "tuple[dict[str, Any], int, dict[str, str]]",
+            api_client.call_api(
+                f"/apis/{group}/{version}", "GET",
+                auth_settings=["BearerToken"], response_types_map={"200": "object"},
+            ),
         )
     except ApiException:
         return []
-    body = cast(dict[str, Any], resp[0])
+    body = resp[0]
     # Skip subresources such as "routes/status".
     return [r for r in body.get("resources", []) if "/" not in r.get("name", "")]
 

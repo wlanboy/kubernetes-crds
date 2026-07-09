@@ -43,6 +43,22 @@ class TestLoadConfig:
 
         kube.assert_called_once()
 
+    def test_verify_ssl_true_leaves_default_configuration_untouched(self):
+        with patch("kubectl.config.load_incluster_config"), \
+             patch("kubectl.client.Configuration.set_default") as set_default:
+            kubectl.load_config(verify_ssl=True)
+
+        set_default.assert_not_called()
+
+    def test_verify_ssl_false_disables_certificate_verification(self):
+        with patch("kubectl.config.load_incluster_config"), \
+             patch("kubectl.client.Configuration.set_default") as set_default:
+            kubectl.load_config(verify_ssl=False)
+
+        set_default.assert_called_once()
+        applied_config = set_default.call_args[0][0]
+        assert applied_config.verify_ssl is False
+
 
 class TestGetNamespaces:
     def test_returns_namespace_info_and_defaults_missing_labels_to_empty_dict(self):

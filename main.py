@@ -44,9 +44,15 @@ def main() -> int:
         help="Also include built-in OpenShift API resources (Route, BuildConfig, "
              "DeploymentConfig, ...) that are aggregated APIs rather than CRDs.",
     )
+    parser.add_argument(
+        "--insecure-skip-tls-verify",
+        action="store_true",
+        help="Disable TLS certificate verification against the API server "
+             "(equivalent to kubectl/oc --insecure-skip-tls-verify).",
+    )
     args = parser.parse_args()
 
-    load_config()
+    load_config(verify_ssl=not args.insecure_skip_tls_verify)
     crds = get_crd_versions(namespace=args.namespace)
 
     if args.openshift:

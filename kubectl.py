@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import urllib3
 from kubernetes import client, config
 from kubernetes.client import (
     V1CustomResourceDefinitionList,
@@ -19,12 +20,24 @@ logger = logging.getLogger(__name__)
 # Bootstrap
 # ---------------------------------------------------------------------------
 
-def load_config() -> None:
-    """Load kubeconfig (in-cluster first, then local ~/.kube/config)."""
+def load_config(*, verify_ssl: bool = True) -> None:
+    """Load kubeconfig (in-cluster first, then local ~/.kube/config).
+
+    If ``verify_ssl`` is False, TLS certificate verification is disabled for
+    all subsequent API calls (equivalent to ``kubectl``/``oc``
+    ``--insecure-skip-tls-verify``) — useful against clusters with
+    self-signed certificates.
+    """
     try:
         config.load_incluster_config()
     except config.ConfigException:
         config.load_kube_config()
+
+    if not verify_ssl:
+        cfg = client.Configuration.get_default_copy()
+        cfg.verify_ssl = False
+        client.Configuration.set_default(cfg)
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 # ---------------------------------------------------------------------------
