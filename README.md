@@ -43,3 +43,12 @@ python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-veri
   dem API-Server (analog zu `kubectl`/`oc --insecure-skip-tls-verify`) –
   nützlich bei Clustern mit selbstsignierten Zertifikaten.
 
+Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutreffend:
+
+- **Deprecated API versions**: Alle CRD-Versionen, die per `spec.versions[].deprecated`
+  als veraltet markiert sind, samt der optionalen `deprecationWarning`-Meldung.
+- **Storage version migration candidates**: CRDs, bei denen `status.storedVersions`
+  noch ältere, nicht mehr aktuelle Storage-Versionen enthält – ein Hinweis, dass
+  Instanzen noch nicht auf die aktuelle Storage-Version migriert wurden und die
+  alte Version deshalb noch nicht aus der CRD entfernt werden darf.
+
