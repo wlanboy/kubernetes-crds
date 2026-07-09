@@ -5,6 +5,7 @@ import argparse
 import sys
 
 from kubectl import get_crd_versions, load_config
+from oc import get_openshift_resource_versions
 
 
 def _format_table(rows: list[tuple[str, ...]], headers: tuple[str, ...]) -> str:
@@ -37,10 +38,22 @@ def main() -> int:
         action="store_true",
         help="Only list CRDs that have no instances in any version/namespace.",
     )
+    parser.add_argument(
+        "--openshift",
+        action="store_true",
+        help="Also include built-in OpenShift API resources (Route, BuildConfig, "
+             "DeploymentConfig, ...) that are aggregated APIs rather than CRDs.",
+    )
     args = parser.parse_args()
 
     load_config()
     crds = get_crd_versions(namespace=args.namespace)
+
+    if args.openshift:
+        crds = sorted(
+            crds + get_openshift_resource_versions(namespace=args.namespace),
+            key=lambda c: (c.group, c.kind),
+        )
 
     if not crds:
         print("No CRDs found.")
