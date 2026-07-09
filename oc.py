@@ -9,7 +9,13 @@ from kubernetes import client
 from kubernetes.client import V1APIGroupList
 from kubernetes.client.rest import ApiException
 
-from kubectl import CRDVersionedInfo, CRDVersionInfo, _custom_list, get_namespaces
+from kubectl import (
+    CRDVersionedInfo,
+    CRDVersionInfo,
+    _count_instances_by_namespace,
+    _custom_list,
+    get_namespaces,
+)
 
 _OPENSHIFT_GROUP_SUFFIX = ".openshift.io"
 
@@ -75,16 +81,10 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
             vinfo = CRDVersionInfo(version=version, served=True, storage=True)
 
             if is_namespaced:
-                for ns in namespaces_to_scan:
-                    try:
-                        resp = _custom_list(
-                            custom, group=group, version=version, namespace=ns, plural=plural,
-                        )
-                        count = len(resp.get("items", []))
-                        if count:
-                            vinfo.instances_by_namespace[ns] = count
-                    except ApiException:
-                        pass
+                vinfo.instances_by_namespace = _count_instances_by_namespace(
+                    custom, group=group, version=version,
+                    plural=plural, namespaces=namespaces_to_scan,
+                )
             else:
                 try:
                     resp = _custom_list(

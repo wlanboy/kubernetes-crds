@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -14,6 +15,9 @@ from kubernetes.client import (
 from kubernetes.client.rest import ApiException
 
 logger = logging.getLogger(__name__)
+
+# Max concurrent API calls when fanning a single group/version out across namespaces.
+_MAX_WORKERS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -112,6 +116,25 @@ def _count_custom(custom: client.CustomObjectsApi, group: str, versions: list[st
     return 0
 
 
+def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str, version: str,
+                                  plural: str, namespaces: list[str]) -> dict[str, int]:
+    """Count group/version/plural instances across namespaces concurrently."""
+    if not namespaces:
+        return {}
+
+    def _count(ns: str) -> tuple[str, int]:
+        try:
+            resp = _custom_list(custom, group=group, version=version, namespace=ns, plural=plural)
+            return ns, len(resp.get("items", []))
+        except ApiException:
+            return ns, 0
+
+    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(namespaces))) as pool:
+        results = pool.map(_count, namespaces)
+
+    return {ns: count for ns, count in results if count}
+
+
 # ---------------------------------------------------------------------------
 # CRD statistics
 # ---------------------------------------------------------------------------
@@ -142,17 +165,10 @@ def get_crd_stats(namespace_names: list[str]) -> list[CRDStat]:
         )
 
         if stat.namespaced:
-            for ns in namespace_names:
-                try:
-                    result = _custom_list(
-                        custom, group=spec.group, version=version,
-                        namespace=ns, plural=spec.names.plural,
-                    )
-                    count = len(result.get("items", []))
-                    if count:
-                        stat.instances_by_namespace[ns] = count
-                except ApiException:
-                    pass
+            stat.instances_by_namespace = _count_instances_by_namespace(
+                custom, group=spec.group, version=version,
+                plural=spec.names.plural, namespaces=namespace_names,
+            )
         else:
             try:
                 result = _custom_list(
@@ -262,17 +278,10 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
 
             if v.served:
                 if is_namespaced:
-                    for ns in namespaces_to_scan:
-                        try:
-                            resp = _custom_list(
-                                custom, group=spec.group, version=v.name,
-                                namespace=ns, plural=spec.names.plural,
-                            )
-                            count = len(resp.get("items", []))
-                            if count:
-                                vinfo.instances_by_namespace[ns] = count
-                        except ApiException:
-                            pass
+                    vinfo.instances_by_namespace = _count_instances_by_namespace(
+                        custom, group=spec.group, version=v.name,
+                        plural=spec.names.plural, namespaces=namespaces_to_scan,
+                    )
                 else:
                     try:
                         resp = _custom_list(

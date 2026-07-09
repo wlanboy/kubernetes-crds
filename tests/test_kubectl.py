@@ -128,10 +128,11 @@ class TestGetCrdStats:
         ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
 
         custom = MagicMock()
-        custom.list_namespaced_custom_object.side_effect = [
-            {"items": [{}, {}]},   # ns-a: 2 items
-            {"items": []},         # ns-b: 0 items
-        ]
+
+        def list_namespaced(group, version, namespace, plural):
+            return {"items": [{}, {}]} if namespace == "ns-a" else {"items": []}
+
+        custom.list_namespaced_custom_object.side_effect = list_namespaced
 
         with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
              patch("kubectl.client.CustomObjectsApi", return_value=custom):
@@ -205,10 +206,11 @@ class TestGetCrdVersions:
         v1.list_namespace.return_value = SimpleNamespace(items=[_ns("ns-a"), _ns("ns-b")])
 
         custom = MagicMock()
-        custom.list_namespaced_custom_object.side_effect = [
-            {"items": [{}]},   # ns-a
-            {"items": []},     # ns-b
-        ]
+
+        def list_namespaced(group, version, namespace, plural):
+            return {"items": [{}]} if namespace == "ns-a" else {"items": []}
+
+        custom.list_namespaced_custom_object.side_effect = list_namespaced
 
         with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
              patch("kubectl.client.CustomObjectsApi", return_value=custom), \
