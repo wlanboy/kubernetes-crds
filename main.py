@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from kubectl import get_crd_versions, load_config
+from kubectl import CRDVersionedInfo, get_crd_versions, load_config
 from oc import get_openshift_resource_versions
 
 
@@ -20,6 +20,30 @@ def _format_table(rows: list[tuple[str, ...]], headers: tuple[str, ...]) -> str:
     lines = [fmt_row(headers), fmt_row(tuple("-" * w for w in widths))]
     lines.extend(fmt_row(row) for row in rows)
     return "\n".join(lines)
+
+
+def _print_deprecation_warnings(crds: list[CRDVersionedInfo]) -> None:
+    lines = [
+        f"  {crd.name} {v.version}: {v.deprecation_warning or 'no deprecation message provided'}"
+        for crd in crds
+        for v in crd.versions
+        if v.deprecated
+    ]
+    if lines:
+        print("\nDeprecated API versions:")
+        print("\n".join(lines))
+
+
+def _print_migration_candidates(crds: list[CRDVersionedInfo]) -> None:
+    lines = [
+        f"  {crd.name}: instances still stored as {crd.pending_migration_versions} "
+        f"(current storage version: {crd.storage_version})"
+        for crd in crds
+        if crd.pending_migration_versions
+    ]
+    if lines:
+        print("\nStorage version migration candidates (status.storedVersions not yet cleaned up):")
+        print("\n".join(lines))
 
 
 def main() -> int:
@@ -69,14 +93,16 @@ def main() -> int:
         unused_crds = [crd for crd in crds if crd.total_instances == 0]
         if not unused_crds:
             print("No unused CRDs found.")
-            return 0
+        else:
+            rows = [
+                (crd.name, crd.group, crd.kind, "Namespaced" if crd.namespaced else "Cluster")
+                for crd in unused_crds
+            ]
+            headers = ("CRD", "GROUP", "KIND", "SCOPE")
+            print(_format_table(rows, headers))
 
-        rows = [
-            (crd.name, crd.group, crd.kind, "Namespaced" if crd.namespaced else "Cluster")
-            for crd in unused_crds
-        ]
-        headers = ("CRD", "GROUP", "KIND", "SCOPE")
-        print(_format_table(rows, headers))
+        _print_deprecation_warnings(crds)
+        _print_migration_candidates(crds)
         return 0
 
     show_namespace_column = args.namespace is None
@@ -92,6 +118,7 @@ def main() -> int:
                 v.version,
                 "yes" if v.served else "no",
                 "yes" if v.storage else "no",
+                "yes" if v.deprecated else "no",
             )
             if v.instances_by_namespace:
                 for ns, count in sorted(v.instances_by_namespace.items()):
@@ -101,11 +128,13 @@ def main() -> int:
                 row = (*base, "-", "-") if show_namespace_column else (*base, "-")
                 rows.append(row)
 
-    headers = ("CRD", "GROUP", "KIND", "SCOPE", "VERSION", "SERVED", "STORAGE")
+    headers = ("CRD", "GROUP", "KIND", "SCOPE", "VERSION", "SERVED", "STORAGE", "DEPRECATED")
     if show_namespace_column:
         headers += ("NAMESPACE",)
     headers += ("INSTANCES",)
     print(_format_table(rows, headers))
+    _print_deprecation_warnings(crds)
+    _print_migration_candidates(crds)
     return 0
 
 
