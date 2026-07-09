@@ -27,7 +27,7 @@ python main.py
 ## Verwendung
 
 ```
-python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-verify]
+python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-verify] [-v]
 ```
 
 - `-n, --namespace NAMESPACE`: Beschränkt die Auswertung auf einen Namespace
@@ -42,6 +42,11 @@ python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-veri
 - `--insecure-skip-tls-verify`: Deaktiviert die TLS-Zertifikatsprüfung gegenüber
   dem API-Server (analog zu `kubectl`/`oc --insecure-skip-tls-verify`) –
   nützlich bei Clustern mit selbstsignierten Zertifikaten.
+- `-v, --verbose`: Aktiviert Debug-Logging, z.B. für einzelne API-Aufrufe, die
+  wegen eines Fehlers (z.B. fehlende RBAC-Berechtigung) übersprungen wurden.
+
+Bei fehlender oder ungültiger kubeconfig bricht das Tool mit einer klaren
+Fehlermeldung und Exitcode 1 ab, statt einen rohen Stacktrace auszugeben.
 
 Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutreffend:
 
