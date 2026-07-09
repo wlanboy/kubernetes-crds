@@ -1,0 +1,141 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+from kubernetes.client.rest import ApiException
+
+import oc
+
+
+def _group(name: str, preferred_version: str) -> SimpleNamespace:
+    return SimpleNamespace(name=name, preferred_version=SimpleNamespace(version=preferred_version))
+
+
+def _resource(name: str, kind: str, namespaced: bool) -> dict:
+    return {"name": name, "kind": kind, "namespaced": namespaced}
+
+
+class TestListOpenshiftGroupVersions:
+    def test_only_openshift_io_groups_are_returned(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(groups=[
+            _group("route.openshift.io", "v1"),
+            _group("apps", "v1"),
+        ])
+
+        with patch("oc.client.ApisApi", return_value=apis_api):
+            result = oc._list_openshift_group_versions()
+
+        assert result == [("route.openshift.io", "v1")]
+
+
+class TestDiscoverGroupVersionResources:
+    def test_subresources_are_skipped(self):
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [
+                {"name": "routes", "kind": "Route", "namespaced": True},
+                {"name": "routes/status", "kind": "Route", "namespaced": True},
+            ]},
+            200,
+            {},
+        )
+
+        result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        assert [r["name"] for r in result] == ["routes"]
+
+    def test_api_exception_returns_empty_list(self):
+        api_client = MagicMock()
+        api_client.call_api.side_effect = ApiException(status=403)
+
+        result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        assert result == []
+
+
+class TestGetOpenshiftResourceVersions:
+    def test_namespaced_resource_instances_are_counted_per_namespace(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(
+            groups=[_group("route.openshift.io", "v1")],
+        )
+
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [_resource("routes", "Route", True)]}, 200, {},
+        )
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": [{}]}
+
+        v1 = MagicMock()
+        v1.list_namespace.return_value = SimpleNamespace(items=[SimpleNamespace(
+            metadata=SimpleNamespace(name="ns-a", labels=None))])
+
+        with patch("oc.client.ApisApi", return_value=apis_api), \
+             patch("oc.client.ApiClient", return_value=api_client), \
+             patch("oc.client.CustomObjectsApi", return_value=custom), \
+             patch("kubectl.client.CoreV1Api", return_value=v1):
+            result = oc.get_openshift_resource_versions(namespace=None)
+
+        assert len(result) == 1
+        info = result[0]
+        assert info.name == "routes.route.openshift.io"
+        assert info.kind == "Route"
+        assert info.namespaced is True
+        assert info.versions[0].instances_by_namespace == {"ns-a": 1}
+
+    def test_cluster_scoped_resource_included_only_without_namespace_filter(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(
+            groups=[_group("security.openshift.io", "v1")],
+        )
+
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [_resource("securitycontextconstraints", "SecurityContextConstraints",
+                                      False)]},
+            200, {},
+        )
+
+        custom = MagicMock()
+        custom.list_cluster_custom_object.return_value = {"items": [{}, {}]}
+
+        v1 = MagicMock()
+        v1.list_namespace.return_value = SimpleNamespace(items=[])
+
+        with patch("oc.client.ApisApi", return_value=apis_api), \
+             patch("oc.client.ApiClient", return_value=api_client), \
+             patch("oc.client.CustomObjectsApi", return_value=custom), \
+             patch("kubectl.client.CoreV1Api", return_value=v1):
+            without_filter = oc.get_openshift_resource_versions(namespace=None)
+            with_filter = oc.get_openshift_resource_versions(namespace="ns-a")
+
+        assert len(without_filter) == 1
+        assert without_filter[0].versions[0].instances_by_namespace == {"(cluster)": 2}
+        assert with_filter == []
+
+    def test_results_sorted_by_group_then_kind(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(groups=[
+            _group("build.openshift.io", "v1"),
+            _group("apps.openshift.io", "v1"),
+        ])
+
+        api_client = MagicMock()
+        api_client.call_api.side_effect = [
+            ({"resources": [_resource("builds", "Build", True)]}, 200, {}),
+            ({"resources": [_resource("deploymentconfigs", "DeploymentConfig", True)]}, 200, {}),
+        ]
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("oc.client.ApisApi", return_value=apis_api), \
+             patch("oc.client.ApiClient", return_value=api_client), \
+             patch("oc.client.CustomObjectsApi", return_value=custom):
+            result = oc.get_openshift_resource_versions(namespace="ns-a")
+
+        assert [r.group for r in result] == ["apps.openshift.io", "build.openshift.io"]
