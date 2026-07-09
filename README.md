@@ -7,7 +7,7 @@ Dadurch lässt sich nicht nur nachvollziehen, welche CRDs im Cluster installiert
 ## Verwendung
 
 ```
-python main.py [-n NAMESPACE] [--unused] [--openshift]
+python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-verify]
 ```
 
 - `-n, --namespace NAMESPACE`: Beschränkt die Auswertung auf einen Namespace
@@ -19,4 +19,7 @@ python main.py [-n NAMESPACE] [--unused] [--openshift]
   aggregierte APIs in `*.openshift.io`-Gruppen laufen und daher keine
   CustomResourceDefinitions sind (siehe [oc.py](oc.py)). Ohne diesen Schalter
   tauchen sie nicht in der Auswertung auf.
+- `--insecure-skip-tls-verify`: Deaktiviert die TLS-Zertifikatsprüfung gegenüber
+  dem API-Server (analog zu `kubectl`/`oc --insecure-skip-tls-verify`) –
+  nützlich bei Clustern mit selbstsignierten Zertifikaten.
 
