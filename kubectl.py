@@ -180,6 +180,8 @@ class CRDVersionInfo:
     version: str
     served: bool
     storage: bool
+    deprecated: bool = False
+    deprecation_warning: str | None = None
     instances_by_namespace: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -195,10 +197,23 @@ class CRDVersionedInfo:
     plural: str
     namespaced: bool
     versions: list[CRDVersionInfo] = field(default_factory=list)
+    # Versions the API server still has objects persisted as (CRD status.storedVersions).
+    stored_versions: list[str] = field(default_factory=list)
 
     @property
     def total_instances(self) -> int:
         return sum(v.total_instances for v in self.versions)
+
+    @property
+    def storage_version(self) -> str | None:
+        return next((v.version for v in self.versions if v.storage), None)
+
+    @property
+    def pending_migration_versions(self) -> list[str]:
+        """Stored versions other than the current storage version — objects still
+        persisted under these have not been migrated and block their removal."""
+        current = self.storage_version
+        return [v for v in self.stored_versions if v != current]
 
 
 def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
@@ -228,16 +243,22 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
         if not is_namespaced and namespace is not None:
             continue
 
+        status = getattr(crd, "status", None)
         info = CRDVersionedInfo(
             name=crd.metadata.name,
             group=spec.group,
             kind=spec.names.kind,
             plural=spec.names.plural,
             namespaced=is_namespaced,
+            stored_versions=list(getattr(status, "stored_versions", None) or []),
         )
 
         for v in (spec.versions or []):
-            vinfo = CRDVersionInfo(version=v.name, served=v.served, storage=v.storage)
+            vinfo = CRDVersionInfo(
+                version=v.name, served=v.served, storage=v.storage,
+                deprecated=bool(getattr(v, "deprecated", False)),
+                deprecation_warning=getattr(v, "deprecation_warning", None),
+            )
 
             if v.served:
                 if is_namespaced:
