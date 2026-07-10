@@ -237,13 +237,34 @@ class TestGetCrdVersions:
         ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
 
         custom = MagicMock()
-        custom.list_namespaced_custom_object.side_effect = ApiException(status=403)
+        custom.list_namespaced_custom_object.side_effect = ApiException(status=403, reason="Forbidden")
 
         with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
              patch("kubectl.client.CustomObjectsApi", return_value=custom):
             result = kubectl.get_crd_versions(namespace="ns-a")
 
         assert result[0].versions[0].instances_by_namespace == {}
+        assert "ns-a" in result[0].versions[0].fetch_errors
+
+    def test_api_exception_on_cluster_scoped_crd_is_recorded_as_fetch_error(self):
+        crd = _crd("clusterwidgets.example.io", "example.io", "ClusterWidget",
+                    "clusterwidgets", "Cluster", [("v1", True, True)])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_cluster_custom_object.side_effect = ApiException(status=500, reason="boom")
+
+        v1 = MagicMock()
+        v1.list_namespace.return_value = SimpleNamespace(items=[])
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom), \
+             patch("kubectl.client.CoreV1Api", return_value=v1):
+            result = kubectl.get_crd_versions(namespace=None)
+
+        assert result[0].versions[0].instances_by_namespace == {}
+        assert "(cluster)" in result[0].versions[0].fetch_errors
 
     def test_results_sorted_by_group_then_kind(self):
         b = _crd("b.bgroup.io", "bgroup.io", "B", "bs", "Namespaced", [("v1", True, True)])

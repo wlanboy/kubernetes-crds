@@ -82,6 +82,18 @@ def _print_migration_candidates(crds: list[CRDVersionedInfo]) -> None:
         print("\n".join(lines))
 
 
+def _print_fetch_errors(crds: list[CRDVersionedInfo]) -> None:
+    entries = sorted(
+        (crd.name, v.version, ns, error)
+        for crd in crds
+        for v in crd.versions
+        for ns, error in v.fetch_errors.items()
+    )
+    if entries:
+        print("\nFetch errors (instance counts marked '?' above are unknown, not zero):")
+        print("\n".join(f"  {name} {version} ({ns}): {error}" for name, version, ns, error in entries))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="List all CRDs in a Kubernetes cluster with every API version "
@@ -167,6 +179,7 @@ def main() -> int:
         _print_migration_candidates(crds)
         _print_webhook_conversion_targets(crds)
         _print_unhealthy_crds(crds)
+        _print_fetch_errors(crds)
         return 0
 
     show_namespace_column = args.namespace is None
@@ -185,9 +198,11 @@ def main() -> int:
                 "yes" if v.storage else "no",
                 "yes" if v.deprecated else "no",
             )
-            if v.instances_by_namespace:
-                for ns, count in sorted(v.instances_by_namespace.items()):
-                    row = (*base, ns, str(count)) if show_namespace_column else (*base, str(count))
+            entries = [(ns, str(count)) for ns, count in v.instances_by_namespace.items()]
+            entries += [(ns, "?") for ns in v.fetch_errors]
+            if entries:
+                for ns, count_str in sorted(entries):
+                    row = (*base, ns, count_str) if show_namespace_column else (*base, count_str)
                     rows.append(row)
             else:
                 row = (*base, "-", "-") if show_namespace_column else (*base, "-")
@@ -202,6 +217,7 @@ def main() -> int:
     _print_migration_candidates(crds)
     _print_webhook_conversion_targets(crds)
     _print_unhealthy_crds(crds)
+    _print_fetch_errors(crds)
     return 0
 
 

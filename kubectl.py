@@ -91,26 +91,42 @@ def _custom_list(custom: client.CustomObjectsApi, *, group: str, version: str,
     return cast(dict[str, Any], result)
 
 
-def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str, version: str,
-                                  plural: str, namespaces: list[str]) -> dict[str, int]:
-    """Count group/version/plural instances across namespaces concurrently."""
-    if not namespaces:
-        return {}
+def _count_instances_by_namespace(
+    custom: client.CustomObjectsApi, *, group: str, version: str,
+    plural: str, namespaces: list[str],
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Count group/version/plural instances across namespaces concurrently.
 
-    def _count(ns: str) -> tuple[str, int]:
+    Returns (counts, errors): ``errors`` maps namespace -> failure reason for
+    namespaces where the count could not be determined at all, so callers can
+    tell "confirmed zero instances" apart from "instance count unknown".
+    """
+    if not namespaces:
+        return {}, {}
+
+    def _count(ns: str) -> tuple[str, int | None, str | None]:
         try:
             resp = _custom_list(custom, group=group, version=version, namespace=ns, plural=plural)
-            return ns, len(resp.get("items", []))
+            return ns, len(resp.get("items", [])), None
         except (ApiException, urllib3.exceptions.HTTPError) as e:
             logger.debug(
                 "Failed to list %s/%s %s in namespace %s: %s", group, version, plural, ns, e,
             )
-            return ns, 0
+            return ns, None, _error_reason(e)
 
     with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(namespaces))) as pool:
-        results = pool.map(_count, namespaces)
+        results = list(pool.map(_count, namespaces))
 
-    return {ns: count for ns, count in results if count}
+    counts = {ns: count for ns, count, _ in results if count}
+    errors = {ns: error for ns, _, error in results if error is not None}
+    return counts, errors
+
+
+def _error_reason(e: Exception) -> str:
+    """Short, human-readable description of an API failure. ApiException.reason
+    is a concise HTTP reason phrase ("Forbidden", "Too Many Requests"); str(e)
+    on the exception itself would dump the full response headers and body."""
+    return getattr(e, "reason", None) or str(e)
 
 
 def _describe_conversion_webhook(conversion: Any) -> tuple[str | None, bool]:
@@ -145,6 +161,10 @@ class CRDVersionInfo:
     deprecated: bool = False
     deprecation_warning: str | None = None
     instances_by_namespace: dict[str, int] = field(default_factory=dict)
+    # Namespace (or "(cluster)" for cluster-scoped resources) -> failure reason,
+    # for namespaces where the instance count could not be fetched at all (e.g.
+    # apiserver timeout). Distinct from a namespace simply having zero instances.
+    fetch_errors: dict[str, str] = field(default_factory=dict)
 
     @property
     def total_instances(self) -> int:
@@ -255,7 +275,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
 
             if v.served:
                 if is_namespaced:
-                    vinfo.instances_by_namespace = _count_instances_by_namespace(
+                    vinfo.instances_by_namespace, vinfo.fetch_errors = _count_instances_by_namespace(
                         custom, group=spec.group, version=v.name,
                         plural=spec.names.plural, namespaces=namespaces_to_scan,
                     )
@@ -273,6 +293,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
                             "Failed to list %s/%s %s (cluster-scoped): %s",
                             spec.group, v.name, spec.names.plural, e,
                         )
+                        vinfo.fetch_errors["(cluster)"] = _error_reason(e)
 
             info.versions.append(vinfo)
 

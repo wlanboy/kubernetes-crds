@@ -158,6 +158,34 @@ class TestGetOpenshiftResourceVersions:
         assert without_filter[0].versions[0].instances_by_namespace == {"(cluster)": 2}
         assert with_filter == []
 
+    def test_api_exception_on_cluster_scoped_resource_is_recorded_as_fetch_error(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(
+            groups=[_group("security.openshift.io", "v1")],
+        )
+
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [_resource("securitycontextconstraints", "SecurityContextConstraints",
+                                      False)]},
+            200, {},
+        )
+
+        custom = MagicMock()
+        custom.list_cluster_custom_object.side_effect = ApiException(status=500, reason="boom")
+
+        v1 = MagicMock()
+        v1.list_namespace.return_value = SimpleNamespace(items=[])
+
+        with patch("oc.client.ApisApi", return_value=apis_api), \
+             patch("oc.client.ApiClient", return_value=api_client), \
+             patch("oc.client.CustomObjectsApi", return_value=custom), \
+             patch("kubectl.client.CoreV1Api", return_value=v1):
+            result = oc.get_openshift_resource_versions(namespace=None)
+
+        assert result[0].versions[0].instances_by_namespace == {}
+        assert "(cluster)" in result[0].versions[0].fetch_errors
+
     def test_results_sorted_by_group_then_kind(self):
         apis_api = MagicMock()
         apis_api.get_api_versions.return_value = SimpleNamespace(groups=[

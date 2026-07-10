@@ -13,11 +13,14 @@ from kubectl import CRDVersionedInfo, CRDVersionInfo
 
 def _version(version: str, served: bool = True, storage: bool = True,
              instances: dict[str, int] | None = None, deprecated: bool = False,
-             deprecation_warning: str | None = None) -> CRDVersionInfo:
+             deprecation_warning: str | None = None,
+             fetch_errors: dict[str, str] | None = None) -> CRDVersionInfo:
     v = CRDVersionInfo(version=version, served=served, storage=storage,
                         deprecated=deprecated, deprecation_warning=deprecation_warning)
     if instances:
         v.instances_by_namespace = instances
+    if fetch_errors:
+        v.fetch_errors = fetch_errors
     return v
 
 
@@ -116,6 +119,52 @@ class TestMain:
         out = capsys.readouterr().out
         row = next(line for line in out.splitlines() if "widgets.example.io" in line)
         assert row.split()[-1] == "-"
+
+    def test_row_shows_question_mark_when_namespace_fetch_failed(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", fetch_errors={"ns-a": "timed out"})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        row = next(line for line in out.splitlines() if "widgets.example.io" in line)
+        assert row.split()[-1] == "?"
+
+    def test_fetch_error_is_reported_below_the_table(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", fetch_errors={"ns-a": "timed out"})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Fetch errors" in out
+        assert "widgets.example.io v1 (ns-a): timed out" in out
+
+    def test_no_fetch_error_section_when_nothing_failed(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", instances={"ns-a": 2})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        assert "Fetch errors" not in capsys.readouterr().out
+
+    def test_unused_view_also_reports_fetch_errors(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", fetch_errors={"ns-a": "timed out"})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Fetch errors" in out
+        assert "widgets.example.io v1 (ns-a): timed out" in out
 
     def test_unused_flag_lists_only_crds_without_instances(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])

@@ -17,6 +17,7 @@ from kubectl import (
     CRDVersionInfo,
     _count_instances_by_namespace,
     _custom_list,
+    _error_reason,
     get_namespaces,
 )
 
@@ -93,7 +94,7 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
             vinfo = CRDVersionInfo(version=version, served=True, storage=True)
 
             if is_namespaced:
-                vinfo.instances_by_namespace = _count_instances_by_namespace(
+                vinfo.instances_by_namespace, vinfo.fetch_errors = _count_instances_by_namespace(
                     custom, group=group, version=version,
                     plural=plural, namespaces=namespaces_to_scan,
                 )
@@ -109,6 +110,7 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
                     logger.debug(
                         "Failed to list %s/%s %s (cluster-scoped): %s", group, version, plural, e,
                     )
+                    vinfo.fetch_errors["(cluster)"] = _error_reason(e)
 
             info.versions.append(vinfo)
             result.append(info)
