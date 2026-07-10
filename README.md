@@ -63,4 +63,8 @@ Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutref
   noch ältere, nicht mehr aktuelle Storage-Versionen enthält – ein Hinweis, dass
   Instanzen noch nicht auf die aktuelle Storage-Version migriert wurden und die
   alte Version deshalb noch nicht aus der CRD entfernt werden darf.
+- **Unhealthy CRDs (status conditions)**: CRDs, deren `status.conditions` vom Typ
+  `Established` bzw. `NamesAccepted` nicht `True` sind (z.B. wegen eines Namens-
+  konflikts). Eine solche CRD taucht in der Tabelle normal auf, aber jeder
+  API-Zugriff darauf schlägt fehl – ohne diesen Hinweis wäre das nicht sichtbar.
 

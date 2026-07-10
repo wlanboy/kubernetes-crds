@@ -24,13 +24,19 @@ def _version(version: str, served: bool = True, storage: bool = True,
 def _crd_info(name: str, group: str, kind: str, namespaced: bool,
               versions: list[CRDVersionInfo],
               stored_versions: list[str] | None = None,
-              conversion_strategy: str = "None") -> CRDVersionedInfo:
+              conversion_strategy: str = "None",
+              established: bool = True, names_accepted: bool = True,
+              established_message: str | None = None,
+              names_accepted_message: str | None = None) -> CRDVersionedInfo:
     return CRDVersionedInfo(
         name=name, group=group, kind=kind, plural=name.split(".")[0],
         namespaced=namespaced, versions=versions,
         stored_versions=stored_versions if stored_versions is not None
         else [v.version for v in versions if v.storage],
         conversion_strategy=conversion_strategy,
+        established=established, names_accepted=names_accepted,
+        established_message=established_message,
+        names_accepted_message=names_accepted_message,
     )
 
 
@@ -247,6 +253,54 @@ class TestMain:
         out = capsys.readouterr().out
         assert "No unused CRDs found." in out
         assert "Storage version migration candidates" in out
+
+    def test_not_established_crd_is_reported(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           established=False, established_message="not all requests are served")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Unhealthy CRDs (status conditions):" in out
+        assert "widgets.example.io: not Established (not all requests are served)" in out
+
+    def test_names_not_accepted_crd_is_reported(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           names_accepted=False,
+                           names_accepted_message="widgets.example.io already in use")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Unhealthy CRDs (status conditions):" in out
+        assert ("widgets.example.io: NamesAccepted=False "
+                "(widgets.example.io already in use)") in out
+
+    def test_no_unhealthy_section_when_all_crds_are_healthy(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Unhealthy CRDs" not in out
+
+    def test_unused_view_also_reports_unhealthy_crds(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           established=False)]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "widgets.example.io" in out
+        assert "Unhealthy CRDs (status conditions):" in out
 
     def test_config_exception_is_reported_cleanly_with_exit_code_1(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])

@@ -129,6 +129,13 @@ class CRDVersionedInfo:
     # reading/writing non-storage versions depends on an external webhook being
     # reachable — worth flagging separately from the per-version served/storage flags.
     conversion_strategy: str = "None"
+    # status.conditions[type=Established/NamesAccepted]. A CRD stuck at False here
+    # never became usable (e.g. a names conflict) — it shows up in list_custom_resource_definition()
+    # like any other CRD, but every API call against it will fail.
+    established: bool = True
+    names_accepted: bool = True
+    established_message: str | None = None
+    names_accepted_message: str | None = None
 
     @property
     def total_instances(self) -> int:
@@ -173,6 +180,9 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
 
         status = getattr(crd, "status", None)
         conversion = getattr(spec, "conversion", None)
+        conditions = {c.type: c for c in (getattr(status, "conditions", None) or [])}
+        established_cond = conditions.get("Established")
+        names_accepted_cond = conditions.get("NamesAccepted")
         info = CRDVersionedInfo(
             name=crd.metadata.name,
             group=spec.group,
@@ -181,6 +191,12 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             namespaced=is_namespaced,
             stored_versions=list(getattr(status, "stored_versions", None) or []),
             conversion_strategy=getattr(conversion, "strategy", None) or "None",
+            established=established_cond is None or established_cond.status == "True",
+            names_accepted=names_accepted_cond is None or names_accepted_cond.status == "True",
+            established_message=established_cond.message
+            if established_cond is not None and established_cond.status != "True" else None,
+            names_accepted_message=names_accepted_cond.message
+            if names_accepted_cond is not None and names_accepted_cond.status != "True" else None,
         )
 
         for v in (spec.versions or []):

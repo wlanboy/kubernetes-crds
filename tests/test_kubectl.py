@@ -12,10 +12,15 @@ def _ns(name: str, labels: dict[str, str] | None = None) -> SimpleNamespace:
     return SimpleNamespace(metadata=SimpleNamespace(name=name, labels=labels))
 
 
+def _condition(type_: str, status: str, message: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(type=type_, status=status, message=message)
+
+
 def _crd(name: str, group: str, kind: str, plural: str, scope: str,
          versions: list[tuple[str, bool, bool] | tuple[str, bool, bool, bool, str | None]],
          stored_versions: list[str] | None = None,
-         conversion_strategy: str | None = None) -> SimpleNamespace:
+         conversion_strategy: str | None = None,
+         conditions: list[SimpleNamespace] | None = None) -> SimpleNamespace:
     version_objs = [
         SimpleNamespace(
             name=v[0], served=v[1], storage=v[2],
@@ -37,6 +42,7 @@ def _crd(name: str, group: str, kind: str, plural: str, scope: str,
         status=SimpleNamespace(
             stored_versions=stored_versions if stored_versions is not None
             else [v.name for v in version_objs if v.storage],
+            conditions=conditions if conditions is not None else [],
         ),
     )
 
@@ -277,6 +283,88 @@ class TestGetCrdVersions:
             result = kubectl.get_crd_versions(namespace="ns-a")
 
         assert result[0].conversion_strategy == "None"
+
+
+class TestStatusConditions:
+    def test_defaults_to_healthy_when_no_conditions_present(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].established is True
+        assert result[0].names_accepted is True
+        assert result[0].established_message is None
+        assert result[0].names_accepted_message is None
+
+    def test_healthy_when_conditions_are_true(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)],
+                    conditions=[
+                        _condition("Established", "True"),
+                        _condition("NamesAccepted", "True"),
+                    ])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].established is True
+        assert result[0].names_accepted is True
+
+    def test_not_established_is_reported_with_message(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)],
+                    conditions=[
+                        _condition("Established", "False", "not all requests are served"),
+                        _condition("NamesAccepted", "True"),
+                    ])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].established is False
+        assert result[0].established_message == "not all requests are served"
+        assert result[0].names_accepted is True
+        assert result[0].names_accepted_message is None
+
+    def test_names_not_accepted_is_reported_with_message(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)],
+                    conditions=[
+                        _condition("Established", "False"),
+                        _condition("NamesAccepted", "False", "widgets.example.io already in use"),
+                    ])
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].names_accepted is False
+        assert result[0].names_accepted_message == "widgets.example.io already in use"
 
 
 class TestStorageVersionMigration:

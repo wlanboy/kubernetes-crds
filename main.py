@@ -39,6 +39,24 @@ def _print_deprecation_warnings(crds: list[CRDVersionedInfo]) -> None:
         print("\n".join(lines))
 
 
+def _print_unhealthy_crds(crds: list[CRDVersionedInfo]) -> None:
+    lines = []
+    for crd in crds:
+        if not crd.established:
+            lines.append(
+                f"  {crd.name}: not Established "
+                f"({crd.established_message or 'no message provided'})",
+            )
+        if not crd.names_accepted:
+            lines.append(
+                f"  {crd.name}: NamesAccepted=False "
+                f"({crd.names_accepted_message or 'no message provided'})",
+            )
+    if lines:
+        print("\nUnhealthy CRDs (status conditions):")
+        print("\n".join(lines))
+
+
 def _print_migration_candidates(crds: list[CRDVersionedInfo]) -> None:
     lines = [
         f"  {crd.name}: instances still stored as {crd.pending_migration_versions} "
@@ -127,6 +145,7 @@ def main() -> int:
 
         _print_deprecation_warnings(crds)
         _print_migration_candidates(crds)
+        _print_unhealthy_crds(crds)
         return 0
 
     show_namespace_column = args.namespace is None
@@ -160,6 +179,7 @@ def main() -> int:
     print(_format_table(rows, headers))
     _print_deprecation_warnings(crds)
     _print_migration_candidates(crds)
+    _print_unhealthy_crds(crds)
     return 0
 
 
