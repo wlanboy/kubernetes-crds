@@ -6,20 +6,38 @@
 #   - eine CRD ganz ohne Instanzen (Kandidat für --unused)
 #   - eine CRD mit veralteter status.storedVersions-Version (Storage-Migration)
 #   - eine cluster-scoped CRD
-#   - eine CRD mit Webhook-Konversionsstrategie ohne caBundle und ohne
-#     erreichbaren Webhook-Service (CONVERSION-Spalte + Abschnitt
-#     "Webhook conversion targets"; nicht-Storage-Versionen lassen sich wegen
-#     des fehlenden Webhooks nicht auflisten — main.py fängt das ab)
 #   - zwei CRDs mit Namenskonflikt (gleiches Kind, gleiche Gruppe), damit die
 #     zweite mit status.conditions[NamesAccepted]=False hängen bleibt
 #     (Abschnitt "Unhealthy CRDs (status conditions)")
 #
+# Nur mit --with-broken-webhook zusätzlich:
+#   - eine CRD mit Webhook-Konversionsstrategie ohne caBundle und ohne
+#     erreichbaren Webhook-Service (CONVERSION-Spalte + Abschnitt
+#     "Webhook conversion targets"). GEFÄHRDET DEN CLUSTER: der API-Server
+#     versucht bei jeder Abfrage der nicht-Storage-Version über den Watch-
+#     Cache-Reflector zu konvertieren und hängt am nicht erreichbaren Ziel —
+#     das kann per API Priority & Fairness zu clusterweitem 429-Throttling
+#     führen, auch in völlig unbeteiligten Namespaces. Nur gegen Wegwerf-
+#     Cluster (z. B. kind) verwenden, niemals gegen produktive/geteilte Cluster.
+#
 # Usage:
-#   ./test.sh              # CRDs + Instanzen anlegen (Context: aktueller kubectl-Context)
-#   ./test.sh <context>    # expliziten Context verwenden
-#   ./test.sh cleanup      # alles wieder entfernen
+#   ./test.sh                          # CRDs + Instanzen anlegen (Context: aktueller kubectl-Context)
+#   ./test.sh <context>                # expliziten Context verwenden
+#   ./test.sh --with-broken-webhook [<context>]   # zusätzlich das riskante Webhook-Szenario anlegen
+#   ./test.sh cleanup                  # alles wieder entfernen
 
 set -euo pipefail
+
+INCLUDE_BROKEN_WEBHOOK=0
+ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--with-broken-webhook" ]]; then
+        INCLUDE_BROKEN_WEBHOOK=1
+    else
+        ARGS+=("$arg")
+    fi
+done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 
 CONTEXT="${1:-}"
 
@@ -252,15 +270,37 @@ EOF
 # v1alpha2 in status.storedVersions stehen -> "Storage version migration
 # candidate" in main.py.
 #
-# Zusätzlich mit Webhook-Konversionsstrategie (ohne caBundle, ohne echten
-# Webhook-Service dahinter) -> "Webhook conversion targets" in main.py. Da
-# nach dem Storage-Umschalten unten v1alpha2 nicht mehr die Storage-Version
-# ist, versucht main.py beim Auflisten dieser Version zu konvertieren, was
-# mangels erreichbarem Webhook fehlschlägt (main.py fängt das ab, siehe
-# _count_instances_by_namespace in kubectl.py).
+# Nur mit --with-broken-webhook: zusätzlich eine Webhook-Konversionsstrategie
+# (ohne caBundle, ohne echten Webhook-Service dahinter) -> "Webhook conversion
+# targets" in main.py. Da nach dem Storage-Umschalten unten v1alpha2 nicht
+# mehr die Storage-Version ist, versucht main.py beim Auflisten dieser
+# Version zu konvertieren, was mangels erreichbarem Webhook fehlschlägt.
+# main.py selbst fängt das pro Request ab (siehe _count_instances_by_namespace
+# in kubectl.py) — GEFÄHRLICH ist trotzdem der API-Server: der hängt am nicht
+# erreichbaren Webhook-Ziel und kann per API Priority & Fairness den gesamten
+# Cluster clusterweit drosseln (429 auch in unbeteiligten Namespaces). Deshalb
+# nur mit explizitem --with-broken-webhook-Flag und nur gegen Wegwerf-Cluster.
 # ---------------------------------------------------------------------------
-echo "==> CRD: certificates.cert-manager.io (Storage-Migrations- + Webhook-Konversions-Szenario)"
-cat > "$WORKDIR/cert-crd.yaml" <<'EOF'
+if [[ "$INCLUDE_BROKEN_WEBHOOK" -eq 1 ]]; then
+    echo "==> CRD: certificates.cert-manager.io (Storage-Migrations- + Webhook-Konversions-Szenario)"
+    echo "    WARNUNG: enthaelt einen kaputten Conversion-Webhook und kann den API-Server"
+    echo "    clusterweit drosseln (429 'Too Many Requests' auch in unbeteiligten Namespaces)."
+    CONVERSION_STANZA='  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions: ["v1"]
+      clientConfig:
+        service:
+          name: cert-manager-webhook
+          namespace: cert-manager
+          path: /convert
+          port: 443'
+else
+    echo "==> CRD: certificates.cert-manager.io (nur Storage-Migrations-Szenario; Webhook-Konversion"
+    echo "    übersprungen — mit --with-broken-webhook aktivierbar, siehe Kopfkommentar)"
+    CONVERSION_STANZA=""
+fi
+cat > "$WORKDIR/cert-crd.yaml" <<EOF
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -273,16 +313,7 @@ spec:
     plural: certificates
     singular: certificate
     shortNames: [cert, certs]
-  conversion:
-    strategy: Webhook
-    webhook:
-      conversionReviewVersions: ["v1"]
-      clientConfig:
-        service:
-          name: cert-manager-webhook
-          namespace: cert-manager
-          path: /convert
-          port: 443
+$CONVERSION_STANZA
   versions:
     - name: v1alpha2
       served: true
@@ -437,9 +468,11 @@ echo "  python main.py"
 echo "  python main.py --unused          # sollte destinationrules.networking.istio.io zeigen"
 echo
 echo "In der Ausgabe von 'python main.py' zusätzlich zu beachten:"
-echo "  - Abschnitt 'Webhook conversion targets': certificates.cert-manager.io"
-echo "    mit Ziel cert-manager-webhook.cert-manager:443/convert und Hinweis"
-echo "    auf fehlendes caBundle"
+if [[ "$INCLUDE_BROKEN_WEBHOOK" -eq 1 ]]; then
+    echo "  - Abschnitt 'Webhook conversion targets': certificates.cert-manager.io"
+    echo "    mit Ziel cert-manager-webhook.cert-manager:443/convert und Hinweis"
+    echo "    auf fehlendes caBundle (ACHTUNG: kann den API-Server clusterweit drosseln)"
+fi
 echo "  - Abschnitt 'Unhealthy CRDs (status conditions)':"
 echo "    endpointsets.routing.example.io mit NamesAccepted=False"
 echo
