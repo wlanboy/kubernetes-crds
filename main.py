@@ -39,6 +39,19 @@ def _print_deprecation_warnings(crds: list[CRDVersionedInfo]) -> None:
         print("\n".join(lines))
 
 
+def _print_webhook_conversion_targets(crds: list[CRDVersionedInfo]) -> None:
+    lines = []
+    for crd in crds:
+        if crd.conversion_strategy != "Webhook":
+            continue
+        target = crd.conversion_webhook_target or "no clientConfig configured"
+        ca_note = "" if crd.conversion_webhook_ca_bundle_present else " (no caBundle configured)"
+        lines.append(f"  {crd.name}: {target}{ca_note}")
+    if lines:
+        print("\nWebhook conversion targets (reachability not verified):")
+        print("\n".join(lines))
+
+
 def _print_unhealthy_crds(crds: list[CRDVersionedInfo]) -> None:
     lines = []
     for crd in crds:
@@ -145,6 +158,7 @@ def main() -> int:
 
         _print_deprecation_warnings(crds)
         _print_migration_candidates(crds)
+        _print_webhook_conversion_targets(crds)
         _print_unhealthy_crds(crds)
         return 0
 
@@ -179,6 +193,7 @@ def main() -> int:
     print(_format_table(rows, headers))
     _print_deprecation_warnings(crds)
     _print_migration_candidates(crds)
+    _print_webhook_conversion_targets(crds)
     _print_unhealthy_crds(crds)
     return 0
 

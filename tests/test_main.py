@@ -25,6 +25,8 @@ def _crd_info(name: str, group: str, kind: str, namespaced: bool,
               versions: list[CRDVersionInfo],
               stored_versions: list[str] | None = None,
               conversion_strategy: str = "None",
+              conversion_webhook_target: str | None = None,
+              conversion_webhook_ca_bundle_present: bool = False,
               established: bool = True, names_accepted: bool = True,
               established_message: str | None = None,
               names_accepted_message: str | None = None) -> CRDVersionedInfo:
@@ -34,6 +36,8 @@ def _crd_info(name: str, group: str, kind: str, namespaced: bool,
         stored_versions=stored_versions if stored_versions is not None
         else [v.version for v in versions if v.storage],
         conversion_strategy=conversion_strategy,
+        conversion_webhook_target=conversion_webhook_target,
+        conversion_webhook_ca_bundle_present=conversion_webhook_ca_bundle_present,
         established=established, names_accepted=names_accepted,
         established_message=established_message,
         names_accepted_message=names_accepted_message,
@@ -253,6 +257,56 @@ class TestMain:
         out = capsys.readouterr().out
         assert "No unused CRDs found." in out
         assert "Storage version migration candidates" in out
+
+    def test_webhook_conversion_target_is_printed(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           conversion_strategy="Webhook",
+                           conversion_webhook_target="widgets-webhook.widgets-system:8443/convert",
+                           conversion_webhook_ca_bundle_present=True)]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Webhook conversion targets (reachability not verified):" in out
+        assert ("widgets.example.io: "
+                "widgets-webhook.widgets-system:8443/convert") in out
+        assert "no caBundle configured" not in out
+
+    def test_webhook_conversion_target_flags_missing_ca_bundle(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           conversion_strategy="Webhook",
+                           conversion_webhook_target="widgets-webhook.widgets-system:8443")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert ("widgets.example.io: widgets-webhook.widgets-system:8443 "
+                "(no caBundle configured)") in out
+
+    def test_webhook_conversion_target_falls_back_when_no_client_config(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")],
+                           conversion_strategy="Webhook")]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "widgets.example.io: no clientConfig configured" in out
+
+    def test_no_webhook_conversion_section_when_no_webhook_strategy_present(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Webhook conversion targets" not in out
 
     def test_not_established_crd_is_reported(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])

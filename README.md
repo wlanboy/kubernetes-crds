@@ -67,4 +67,11 @@ Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutref
   `Established` bzw. `NamesAccepted` nicht `True` sind (z.B. wegen eines Namens-
   konflikts). Eine solche CRD taucht in der Tabelle normal auf, aber jeder
   API-Zugriff darauf schlägt fehl – ohne diesen Hinweis wäre das nicht sichtbar.
+- **Webhook conversion targets**: Für jede CRD mit `CONVERSION=Webhook` wird das
+  Ziel aus `spec.conversion.webhook.clientConfig` angezeigt – entweder als
+  `service.name.service.namespace:port/path` (bei einem clusterinternen Service)
+  oder als externe URL – sowie ein Hinweis, falls kein `caBundle` konfiguriert
+  ist. Das dient nur der manuellen Erreichbarkeitsprüfung; ob der Webhook
+  tatsächlich erreichbar ist, wird nicht geprüft (siehe Hinweis zur Spalte
+  CONVERSION oben).
 

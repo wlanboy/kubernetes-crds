@@ -16,11 +16,26 @@ def _condition(type_: str, status: str, message: str | None = None) -> SimpleNam
     return SimpleNamespace(type=type_, status=status, message=message)
 
 
+def _service_client_config(name: str, namespace: str, port: int | None = None,
+                            path: str | None = None,
+                            ca_bundle: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(
+        service=SimpleNamespace(name=name, namespace=namespace, port=port, path=path),
+        url=None,
+        ca_bundle=ca_bundle,
+    )
+
+
+def _url_client_config(url: str, ca_bundle: str | None = None) -> SimpleNamespace:
+    return SimpleNamespace(service=None, url=url, ca_bundle=ca_bundle)
+
+
 def _crd(name: str, group: str, kind: str, plural: str, scope: str,
          versions: list[tuple[str, bool, bool] | tuple[str, bool, bool, bool, str | None]],
          stored_versions: list[str] | None = None,
          conversion_strategy: str | None = None,
-         conditions: list[SimpleNamespace] | None = None) -> SimpleNamespace:
+         conditions: list[SimpleNamespace] | None = None,
+         webhook_client_config: SimpleNamespace | None = None) -> SimpleNamespace:
     version_objs = [
         SimpleNamespace(
             name=v[0], served=v[1], storage=v[2],
@@ -29,6 +44,11 @@ def _crd(name: str, group: str, kind: str, plural: str, scope: str,
         )
         for v in versions
     ]
+    conversion = None
+    if conversion_strategy is not None:
+        webhook = (SimpleNamespace(client_config=webhook_client_config)
+                   if webhook_client_config is not None else None)
+        conversion = SimpleNamespace(strategy=conversion_strategy, webhook=webhook)
     return SimpleNamespace(
         metadata=SimpleNamespace(name=name),
         spec=SimpleNamespace(
@@ -36,8 +56,7 @@ def _crd(name: str, group: str, kind: str, plural: str, scope: str,
             scope=scope,
             names=SimpleNamespace(kind=kind, plural=plural),
             versions=version_objs,
-            conversion=SimpleNamespace(strategy=conversion_strategy)
-            if conversion_strategy is not None else None,
+            conversion=conversion,
         ),
         status=SimpleNamespace(
             stored_versions=stored_versions if stored_versions is not None
@@ -283,6 +302,80 @@ class TestGetCrdVersions:
             result = kubectl.get_crd_versions(namespace="ns-a")
 
         assert result[0].conversion_strategy == "None"
+
+    def test_webhook_service_target_is_formatted_with_namespace_and_port(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)], conversion_strategy="Webhook",
+                    webhook_client_config=_service_client_config(
+                        "widgets-webhook", "widgets-system", port=8443, path="/convert",
+                        ca_bundle="abc123",
+                    ))
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].conversion_webhook_target == "widgets-webhook.widgets-system:8443/convert"
+        assert result[0].conversion_webhook_ca_bundle_present is True
+
+    def test_webhook_service_target_defaults_port_and_path_when_omitted(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)], conversion_strategy="Webhook",
+                    webhook_client_config=_service_client_config(
+                        "widgets-webhook", "widgets-system",
+                    ))
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].conversion_webhook_target == "widgets-webhook.widgets-system:443"
+        assert result[0].conversion_webhook_ca_bundle_present is False
+
+    def test_webhook_url_target_is_used_when_no_service_is_configured(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)], conversion_strategy="Webhook",
+                    webhook_client_config=_url_client_config(
+                        "https://webhook.example.com/convert", ca_bundle="abc123",
+                    ))
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].conversion_webhook_target == "https://webhook.example.com/convert"
+        assert result[0].conversion_webhook_ca_bundle_present is True
+
+    def test_webhook_target_is_none_when_no_client_config_present(self):
+        crd = _crd("widgets.example.io", "example.io", "Widget", "widgets", "Namespaced",
+                    [("v1", True, True)], conversion_strategy="Webhook")
+        ext = MagicMock()
+        ext.list_custom_resource_definition.return_value = SimpleNamespace(items=[crd])
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": []}
+
+        with patch("kubectl.client.ApiextensionsV1Api", return_value=ext), \
+             patch("kubectl.client.CustomObjectsApi", return_value=custom):
+            result = kubectl.get_crd_versions(namespace="ns-a")
+
+        assert result[0].conversion_webhook_target is None
+        assert result[0].conversion_webhook_ca_bundle_present is False
 
 
 class TestStatusConditions:

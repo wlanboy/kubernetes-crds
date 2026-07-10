@@ -97,6 +97,26 @@ def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str
     return {ns: count for ns, count in results if count}
 
 
+def _describe_conversion_webhook(conversion: Any) -> tuple[str | None, bool]:
+    """Return (target, ca_bundle_present) describing where a Webhook conversion
+    strategy sends conversion requests — either a cluster-internal Service
+    (name.namespace:port/path) or an external URL."""
+    webhook = getattr(conversion, "webhook", None)
+    client_config = getattr(webhook, "client_config", None)
+    if client_config is None:
+        return None, False
+
+    service = getattr(client_config, "service", None)
+    if service is not None:
+        port = service.port or 443
+        path = service.path or ""
+        target = f"{service.name}.{service.namespace}:{port}{path}"
+    else:
+        target = getattr(client_config, "url", None)
+
+    return target, bool(getattr(client_config, "ca_bundle", None))
+
+
 # ---------------------------------------------------------------------------
 # CRD listing across all versions
 # ---------------------------------------------------------------------------
@@ -129,6 +149,11 @@ class CRDVersionedInfo:
     # reading/writing non-storage versions depends on an external webhook being
     # reachable — worth flagging separately from the per-version served/storage flags.
     conversion_strategy: str = "None"
+    # spec.conversion.webhook.clientConfig — where the conversion webhook is reached,
+    # either a cluster-internal Service or an external URL. Only meaningful when
+    # conversion_strategy is "Webhook"; not verified for actual reachability.
+    conversion_webhook_target: str | None = None
+    conversion_webhook_ca_bundle_present: bool = False
     # status.conditions[type=Established/NamesAccepted]. A CRD stuck at False here
     # never became usable (e.g. a names conflict) — it shows up in list_custom_resource_definition()
     # like any other CRD, but every API call against it will fail.
@@ -183,6 +208,7 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
         conditions = {c.type: c for c in (getattr(status, "conditions", None) or [])}
         established_cond = conditions.get("Established")
         names_accepted_cond = conditions.get("NamesAccepted")
+        webhook_target, webhook_ca_bundle_present = _describe_conversion_webhook(conversion)
         info = CRDVersionedInfo(
             name=crd.metadata.name,
             group=spec.group,
@@ -191,6 +217,8 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             namespaced=is_namespaced,
             stored_versions=list(getattr(status, "stored_versions", None) or []),
             conversion_strategy=getattr(conversion, "strategy", None) or "None",
+            conversion_webhook_target=webhook_target,
+            conversion_webhook_ca_bundle_present=webhook_ca_bundle_present,
             established=established_cond is None or established_cond.status == "True",
             names_accepted=names_accepted_cond is None or names_accepted_cond.status == "True",
             established_message=established_cond.message
