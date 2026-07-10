@@ -6,6 +6,13 @@
 #   - eine CRD ganz ohne Instanzen (Kandidat für --unused)
 #   - eine CRD mit veralteter status.storedVersions-Version (Storage-Migration)
 #   - eine cluster-scoped CRD
+#   - eine CRD mit Webhook-Konversionsstrategie ohne caBundle und ohne
+#     erreichbaren Webhook-Service (CONVERSION-Spalte + Abschnitt
+#     "Webhook conversion targets"; nicht-Storage-Versionen lassen sich wegen
+#     des fehlenden Webhooks nicht auflisten — main.py fängt das ab)
+#   - zwei CRDs mit Namenskonflikt (gleiches Kind, gleiche Gruppe), damit die
+#     zweite mit status.conditions[NamesAccepted]=False hängen bleibt
+#     (Abschnitt "Unhealthy CRDs (status conditions)")
 #
 # Usage:
 #   ./test.sh              # CRDs + Instanzen anlegen (Context: aktueller kubectl-Context)
@@ -25,6 +32,8 @@ if [[ "$CONTEXT" == "cleanup" ]]; then
         appprojects.argoproj.io \
         certificates.cert-manager.io \
         clusterissuers.cert-manager.io \
+        backends.routing.example.io \
+        endpointsets.routing.example.io \
         --ignore-not-found
     kubectl delete ns istio-system argocd cert-manager --ignore-not-found
     echo "==> Fertig."
@@ -242,8 +251,15 @@ EOF
 # Instanzen erzeugen, dann Storage-Version auf v1 umschalten. Danach bleibt
 # v1alpha2 in status.storedVersions stehen -> "Storage version migration
 # candidate" in main.py.
+#
+# Zusätzlich mit Webhook-Konversionsstrategie (ohne caBundle, ohne echten
+# Webhook-Service dahinter) -> "Webhook conversion targets" in main.py. Da
+# nach dem Storage-Umschalten unten v1alpha2 nicht mehr die Storage-Version
+# ist, versucht main.py beim Auflisten dieser Version zu konvertieren, was
+# mangels erreichbarem Webhook fehlschlägt (main.py fängt das ab, siehe
+# _count_instances_by_namespace in kubectl.py).
 # ---------------------------------------------------------------------------
-echo "==> CRD: certificates.cert-manager.io (Storage-Migrations-Szenario)"
+echo "==> CRD: certificates.cert-manager.io (Storage-Migrations- + Webhook-Konversions-Szenario)"
 cat > "$WORKDIR/cert-crd.yaml" <<'EOF'
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
@@ -257,6 +273,16 @@ spec:
     plural: certificates
     singular: certificate
     shortNames: [cert, certs]
+  conversion:
+    strategy: Webhook
+    webhook:
+      conversionReviewVersions: ["v1"]
+      clientConfig:
+        service:
+          name: cert-manager-webhook
+          namespace: cert-manager
+          path: /convert
+          port: 443
   versions:
     - name: v1alpha2
       served: true
@@ -336,6 +362,63 @@ metadata:
 spec: {}
 EOF
 
+# ---------------------------------------------------------------------------
+# Namenskonflikt: zwei CRDs in derselben Gruppe mit demselben Kind. Die zweite
+# bleibt mit status.conditions[NamesAccepted]=False (und dadurch auch nie
+# Established) hängen -> "Unhealthy CRDs (status conditions)" in main.py.
+# ---------------------------------------------------------------------------
+echo "==> CRD: backends.routing.example.io (Kind: Backend)"
+cat > "$WORKDIR/backend-crd.yaml" <<'EOF'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: backends.routing.example.io
+spec:
+  group: routing.example.io
+  scope: Namespaced
+  names:
+    kind: Backend
+    plural: backends
+    singular: backend
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+EOF
+kubectl apply -f "$WORKDIR/backend-crd.yaml"
+wait_established backends.routing.example.io
+
+echo "==> CRD: endpointsets.routing.example.io (Kind: Backend — bewusster Namenskonflikt mit backends.routing.example.io)"
+cat > "$WORKDIR/endpointsets-crd.yaml" <<'EOF'
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: endpointsets.routing.example.io
+spec:
+  group: routing.example.io
+  scope: Namespaced
+  names:
+    kind: Backend
+    plural: endpointsets
+    singular: endpointset
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          x-kubernetes-preserve-unknown-fields: true
+EOF
+kubectl apply -f "$WORKDIR/endpointsets-crd.yaml"
+echo "    (wird absichtlich NIE Established — NamesAccepted=False wegen Kind-Konflikt)"
+kubectl wait --for=condition=Established "crd/endpointsets.routing.example.io" --timeout=15s \
+    || echo "    -> wie erwartet nicht Established."
+
 echo
 echo "==> Fertig. Angelegte CRDs:"
 kubectl get crd \
@@ -344,12 +427,21 @@ kubectl get crd \
     applications.argoproj.io \
     appprojects.argoproj.io \
     certificates.cert-manager.io \
-    clusterissuers.cert-manager.io
+    clusterissuers.cert-manager.io \
+    backends.routing.example.io \
+    endpointsets.routing.example.io
 
 echo
 echo "Jetzt testen mit:"
 echo "  python main.py"
 echo "  python main.py --unused          # sollte destinationrules.networking.istio.io zeigen"
+echo
+echo "In der Ausgabe von 'python main.py' zusätzlich zu beachten:"
+echo "  - Abschnitt 'Webhook conversion targets': certificates.cert-manager.io"
+echo "    mit Ziel cert-manager-webhook.cert-manager:443/convert und Hinweis"
+echo "    auf fehlendes caBundle"
+echo "  - Abschnitt 'Unhealthy CRDs (status conditions)':"
+echo "    endpointsets.routing.example.io mit NamesAccepted=False"
 echo
 echo "Aufräumen mit:"
 echo "  ./test.sh cleanup"
