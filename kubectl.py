@@ -51,7 +51,7 @@ def load_config(*, verify_ssl: bool = True) -> None:
     # helping — one attempt per call is enough given callers already treat a
     # timeout as "no data available" and move on.
     cfg = client.Configuration.get_default_copy()
-    cfg.retries = 0
+    cfg.retries = 0  # pyright: ignore[reportAttributeAccessIssue]  # stub types this as None-only
     if not verify_ssl:
         cfg.verify_ssl = False
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
