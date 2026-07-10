@@ -83,12 +83,15 @@ class TestLoadConfig:
 
         kube.assert_called_once()
 
-    def test_verify_ssl_true_leaves_default_configuration_untouched(self):
+    def test_verify_ssl_true_disables_retries_but_leaves_verification_on(self):
         with patch("kubectl.config.load_incluster_config"), \
              patch("kubectl.client.Configuration.set_default") as set_default:
             kubectl.load_config(verify_ssl=True)
 
-        set_default.assert_not_called()
+        set_default.assert_called_once()
+        applied_config = set_default.call_args[0][0]
+        assert applied_config.retries == 0
+        assert applied_config.verify_ssl is True
 
     def test_verify_ssl_false_disables_certificate_verification(self):
         with patch("kubectl.config.load_incluster_config"), \
@@ -98,6 +101,7 @@ class TestLoadConfig:
         set_default.assert_called_once()
         applied_config = set_default.call_args[0][0]
         assert applied_config.verify_ssl is False
+        assert applied_config.retries == 0
 
 
 class TestGetNamespaces:
@@ -121,6 +125,7 @@ class TestCustomList:
 
         custom.list_namespaced_custom_object.assert_called_once_with(
             group="g", version="v1", namespace="ns1", plural="things",
+            _request_timeout=kubectl._REQUEST_TIMEOUT,
         )
         custom.list_cluster_custom_object.assert_not_called()
 
@@ -130,6 +135,7 @@ class TestCustomList:
 
         custom.list_cluster_custom_object.assert_called_once_with(
             group="g", version="v1", plural="things",
+            _request_timeout=kubectl._REQUEST_TIMEOUT,
         )
         custom.list_namespaced_custom_object.assert_not_called()
 
@@ -146,7 +152,7 @@ class TestGetCrdVersions:
 
         custom = MagicMock()
 
-        def list_namespaced(group, version, namespace, plural):
+        def list_namespaced(group, version, namespace, plural, **kwargs):
             return {"items": [{}]} if namespace == "ns-a" else {"items": []}
 
         custom.list_namespaced_custom_object.side_effect = list_namespaced
@@ -180,6 +186,7 @@ class TestGetCrdVersions:
         v1.list_namespace.assert_not_called()
         custom.list_namespaced_custom_object.assert_called_once_with(
             group="example.io", version="v1", namespace="ns-a", plural="widgets",
+            _request_timeout=kubectl._REQUEST_TIMEOUT,
         )
 
     def test_cluster_scoped_crd_included_only_without_namespace_filter(self):

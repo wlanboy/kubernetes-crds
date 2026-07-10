@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 # Max concurrent API calls when fanning a single group/version out across namespaces.
 _MAX_WORKERS = 10
 
+# Per-request timeout (seconds) for every Kubernetes API call. Without this, a
+# misbehaving apiserver (e.g. a CRD with a broken conversion webhook — the
+# apiserver's watch-cache reflector for that resource can hang indefinitely
+# trying to reach it, even for unrelated namespaces/versions) blocks the
+# underlying HTTP call forever: the generated client only wraps SSL errors
+# into ApiException, so a read timeout otherwise never surfaces at all.
+_REQUEST_TIMEOUT = 30
+
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -37,11 +45,17 @@ def load_config(*, verify_ssl: bool = True) -> None:
     except config.ConfigException:
         config.load_kube_config()
 
+    # Retrying a request that failed because the apiserver itself is stuck
+    # (e.g. its watch-cache reflector is wedged behind a broken CRD conversion
+    # webhook) just multiplies _REQUEST_TIMEOUT by the retry count instead of
+    # helping — one attempt per call is enough given callers already treat a
+    # timeout as "no data available" and move on.
+    cfg = client.Configuration.get_default_copy()
+    cfg.retries = 0
     if not verify_ssl:
-        cfg = client.Configuration.get_default_copy()
         cfg.verify_ssl = False
-        client.Configuration.set_default(cfg)
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    client.Configuration.set_default(cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +68,7 @@ def load_config(*, verify_ssl: bool = True) -> None:
 
 def get_namespaces() -> list[str]:
     v1 = client.CoreV1Api()
-    ns_list = cast(V1NamespaceList, v1.list_namespace())
+    ns_list = cast(V1NamespaceList, v1.list_namespace(_request_timeout=_REQUEST_TIMEOUT))
     return [ns.metadata.name for ns in (ns_list.items or [])]
 
 
@@ -67,10 +81,12 @@ def _custom_list(custom: client.CustomObjectsApi, *, group: str, version: str,
     if namespace is not None:
         result = custom.list_namespaced_custom_object(
             group=group, version=version, namespace=namespace, plural=plural,
+            _request_timeout=_REQUEST_TIMEOUT,
         )
     else:
         result = custom.list_cluster_custom_object(
             group=group, version=version, plural=plural,
+            _request_timeout=_REQUEST_TIMEOUT,
         )
     return cast(dict[str, Any], result)
 
@@ -85,9 +101,9 @@ def _count_instances_by_namespace(custom: client.CustomObjectsApi, *, group: str
         try:
             resp = _custom_list(custom, group=group, version=version, namespace=ns, plural=plural)
             return ns, len(resp.get("items", []))
-        except ApiException as e:
+        except (ApiException, urllib3.exceptions.HTTPError) as e:
             logger.debug(
-                "Failed to list %s/%s %s in namespace %s: %s", group, version, plural, ns, e.reason,
+                "Failed to list %s/%s %s in namespace %s: %s", group, version, plural, ns, e,
             )
             return ns, 0
 
@@ -193,7 +209,10 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
 
     namespaces_to_scan = [namespace] if namespace is not None else get_namespaces()
 
-    crd_list = cast(V1CustomResourceDefinitionList, ext.list_custom_resource_definition())
+    crd_list = cast(
+        V1CustomResourceDefinitionList,
+        ext.list_custom_resource_definition(_request_timeout=_REQUEST_TIMEOUT),
+    )
     result: list[CRDVersionedInfo] = []
 
     for crd in (crd_list.items or []):
@@ -249,10 +268,10 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
                         count = len(resp.get("items", []))
                         if count:
                             vinfo.instances_by_namespace["(cluster)"] = count
-                    except ApiException as e:
+                    except (ApiException, urllib3.exceptions.HTTPError) as e:
                         logger.debug(
                             "Failed to list %s/%s %s (cluster-scoped): %s",
-                            spec.group, v.name, spec.names.plural, e.reason,
+                            spec.group, v.name, spec.names.plural, e,
                         )
 
             info.versions.append(vinfo)

@@ -131,14 +131,21 @@ def main() -> int:
 
     try:
         crds = get_crd_versions(namespace=args.namespace)
-        if args.openshift:
+    except (ApiException, urllib3.exceptions.HTTPError) as e:
+        print(f"Error: could not reach the Kubernetes API server: {e}", file=sys.stderr)
+        return 1
+
+    if args.openshift:
+        try:
             crds = sorted(
                 crds + get_openshift_resource_versions(namespace=args.namespace),
                 key=lambda c: (c.group, c.kind),
             )
-    except (ApiException, urllib3.exceptions.HTTPError) as e:
-        print(f"Error: could not reach the Kubernetes API server: {e}", file=sys.stderr)
-        return 1
+        except (ApiException, urllib3.exceptions.HTTPError) as e:
+            print(
+                f"Warning: could not fetch OpenShift resources, showing CRDs only: {e}",
+                file=sys.stderr,
+            )
 
     if not crds:
         print("No CRDs found.")

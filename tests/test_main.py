@@ -415,6 +415,37 @@ class TestMain:
                    side_effect=ApiException(status=500, reason="Internal Server Error")):
             exit_code = main.main()
 
-        assert exit_code == 1
+        # A failed OpenShift enrichment degrades gracefully instead of aborting
+        # the whole report — the caller already has (possibly empty) CRD data.
+        assert exit_code == 0
         err = capsys.readouterr().err
-        assert "could not reach the Kubernetes API server" in err
+        assert "could not fetch OpenShift resources, showing CRDs only" in err
+
+    def test_openshift_failure_still_shows_already_fetched_crds(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--openshift"])
+        crd = _crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])
+
+        with patch("main.load_config"), \
+             patch("main.get_crd_versions", return_value=[crd]), \
+             patch("main.get_openshift_resource_versions",
+                   side_effect=ApiException(status=500, reason="Internal Server Error")):
+            exit_code = main.main()
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "widgets.example.io" in out
+
+    def test_connection_error_while_fetching_openshift_resources_is_reported_cleanly(
+        self, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--openshift"])
+
+        with patch("main.load_config"), \
+             patch("main.get_crd_versions", return_value=[]), \
+             patch("main.get_openshift_resource_versions",
+                   side_effect=urllib3.exceptions.MaxRetryError(pool=MagicMock(), url="/apis")):
+            exit_code = main.main()
+
+        assert exit_code == 0
+        err = capsys.readouterr().err
+        assert "could not fetch OpenShift resources, showing CRDs only" in err

@@ -76,6 +76,25 @@ class TestDiscoverGroupVersionResources:
 
         assert result == []
 
+    def test_entries_missing_kind_or_name_are_skipped(self):
+        # Real discovery responses always carry both fields, but the resource
+        # list is cluster-supplied — a malformed entry must not blow up with
+        # a raw KeyError further down the line.
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [
+                {"name": "routes", "kind": "Route", "namespaced": True},
+                {"name": "broken", "namespaced": True},
+                {"kind": "AlsoBroken", "namespaced": True},
+            ]},
+            200,
+            {},
+        )
+
+        result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        assert [r["name"] for r in result] == ["routes"]
+
 
 class TestGetOpenshiftResourceVersions:
     def test_namespaced_resource_instances_are_counted_per_namespace(self):
