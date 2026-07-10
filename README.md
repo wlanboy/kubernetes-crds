@@ -74,4 +74,14 @@ Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutref
   ist. Das dient nur der manuellen Erreichbarkeitsprüfung; ob der Webhook
   tatsächlich erreichbar ist, wird nicht geprüft (siehe Hinweis zur Spalte
   CONVERSION oben).
+- **Fetch errors**: Konnte die Instanzanzahl für eine CRD-Version in einem
+  Namespace (bzw. clusterweit) nicht ermittelt werden (z.B. wegen eines nicht
+  erreichbaren Konversions-Webhooks oder fehlender RBAC-Berechtigung), taucht
+  in der Tabelle statt einer Zahl ein `?` auf. Dieser Abschnitt listet zu jedem
+  `?` den zugrunde liegenden Fehlergrund auf, damit klar ist, dass es sich um
+  einen unbekannten und nicht um einen tatsächlichen Nullwert handelt.
+
+Alle API-Aufrufe sind mit einem Timeout von 30 Sekunden abgesichert, damit ein
+einzelner hängender Request (z.B. wegen eines kaputten Konversions-Webhooks)
+das Tool nicht unbegrenzt blockiert.
 
