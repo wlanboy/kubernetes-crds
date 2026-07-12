@@ -34,6 +34,9 @@ python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-veri
   (ohne Angabe werden alle Namespaces sowie cluster-scoped CRDs erfasst).
 - `--unused`: Listet nur die CRDs auf, die in keiner Version/keinem Namespace
   Instanzen besitzen – praktisch, um Kandidaten für eine Bereinigung zu finden.
+  CRDs, bei denen die Instanzanzahl in mindestens einem Namespace nicht ermittelt
+  werden konnte (siehe **Fetch errors** unten), gelten nicht als bestätigt
+  unused und tauchen stattdessen im Abschnitt **Unclear** auf.
 - `--openshift`: Bezieht zusätzlich OpenShift-spezifische API-Ressourcen mit ein
   (z.B. `Route`, `BuildConfig`, `DeploymentConfig`), die als eingebaute
   aggregierte APIs in `*.openshift.io`-Gruppen laufen und daher keine
@@ -74,6 +77,11 @@ Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutref
   ist. Das dient nur der manuellen Erreichbarkeitsprüfung; ob der Webhook
   tatsächlich erreichbar ist, wird nicht geprüft (siehe Hinweis zur Spalte
   CONVERSION oben).
+- **Unclear** (nur bei `--unused`): CRDs, die keine bestätigten Instanzen
+  haben, bei denen aber in mindestens einem Namespace die Instanzanzahl nicht
+  ermittelt werden konnte – die Zeile weiter unten im Abschnitt **Fetch errors**
+  nennt den Grund. Diese CRDs erscheinen bewusst nicht in der Unused-Tabelle
+  oben, da sie in Wirklichkeit Instanzen besitzen könnten.
 - **Fetch errors**: Konnte die Instanzanzahl für eine CRD-Version in einem
   Namespace (bzw. clusterweit) nicht ermittelt werden (z.B. wegen eines nicht
   erreichbaren Konversions-Webhooks oder fehlender RBAC-Berechtigung), taucht

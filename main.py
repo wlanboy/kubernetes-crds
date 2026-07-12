@@ -82,6 +82,20 @@ def _print_migration_candidates(crds: list[CRDVersionedInfo]) -> None:
         print("\n".join(lines))
 
 
+def _print_unclear_crds(crds: list[CRDVersionedInfo]) -> None:
+    lines = [f"  {crd.name}" for crd in crds if crd.total_instances == 0 and _has_fetch_errors(crd)]
+    if lines:
+        print(
+            "\nUnclear (instance count could not be confirmed in every namespace, "
+            "see fetch errors below — not listed as unused):",
+        )
+        print("\n".join(lines))
+
+
+def _has_fetch_errors(crd: CRDVersionedInfo) -> bool:
+    return any(v.fetch_errors for v in crd.versions)
+
+
 def _print_fetch_errors(crds: list[CRDVersionedInfo]) -> None:
     entries = sorted(
         (crd.name, v.version, ns, error)
@@ -164,7 +178,9 @@ def main() -> int:
         return 0
 
     if args.unused:
-        unused_crds = [crd for crd in crds if crd.total_instances == 0]
+        unused_crds = [
+            crd for crd in crds if crd.total_instances == 0 and not _has_fetch_errors(crd)
+        ]
         if not unused_crds:
             print("No unused CRDs found.")
         else:
@@ -179,6 +195,7 @@ def main() -> int:
         _print_migration_candidates(crds)
         _print_webhook_conversion_targets(crds)
         _print_unhealthy_crds(crds)
+        _print_unclear_crds(crds)
         _print_fetch_errors(crds)
         return 0
 

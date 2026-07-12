@@ -166,6 +166,22 @@ class TestMain:
         assert "Fetch errors" in out
         assert "widgets.example.io v1 (ns-a): timed out" in out
 
+    def test_unused_view_excludes_crds_with_fetch_errors_and_lists_them_as_unclear(
+        self, capsys, monkeypatch,
+    ):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", fetch_errors={"ns-a": "timed out"})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "No unused CRDs found." in out
+        assert "Unclear" in out
+        unclear_line = next(line for line in out.splitlines() if "widgets.example.io" in line)
+        assert unclear_line.strip() == "widgets.example.io"
+
     def test_unused_flag_lists_only_crds_without_instances(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
         crds = [
