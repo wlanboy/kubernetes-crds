@@ -154,6 +154,22 @@ class TestMain:
 
         assert "Fetch errors" not in capsys.readouterr().out
 
+    def test_normal_view_reports_unclear_crds(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,
+                           [_version("v1", fetch_errors={"ns-a": "timed out"})])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "Unclear" in out
+        unclear_line = next(
+            line for line in out.splitlines()
+            if line.strip() == "widgets.example.io"
+        )
+        assert unclear_line.strip() == "widgets.example.io"
+
     def test_unused_view_also_reports_fetch_errors(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py", "--unused"])
         crds = [_crd_info("widgets.example.io", "example.io", "Widget", True,

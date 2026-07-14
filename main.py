@@ -234,6 +234,7 @@ def main() -> int:
     _print_migration_candidates(crds)
     _print_webhook_conversion_targets(crds)
     _print_unhealthy_crds(crds)
+    _print_unclear_crds(crds)
     _print_fetch_errors(crds)
     return 0
 
