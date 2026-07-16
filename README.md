@@ -77,10 +77,11 @@ Zusätzlich zur Tabelle werden zwei Hinweis-Abschnitte ausgegeben, sofern zutref
   ist. Das dient nur der manuellen Erreichbarkeitsprüfung; ob der Webhook
   tatsächlich erreichbar ist, wird nicht geprüft (siehe Hinweis zur Spalte
   CONVERSION oben).
-- **Unclear** (nur bei `--unused`): CRDs, die keine bestätigten Instanzen
-  haben, bei denen aber in mindestens einem Namespace die Instanzanzahl nicht
-  ermittelt werden konnte – die Zeile weiter unten im Abschnitt **Fetch errors**
-  nennt den Grund. Diese CRDs erscheinen bewusst nicht in der Unused-Tabelle
+- **Unclear**: CRDs, die keine bestätigten Instanzen haben, bei denen aber in
+  mindestens einem Namespace die Instanzanzahl nicht ermittelt werden konnte –
+  die Zeile weiter unten im Abschnitt **Fetch errors** nennt den Grund. Dieser
+  Abschnitt erscheint sowohl in der normalen Ausgabe als auch bei `--unused`;
+  im `--unused`-Modus erscheinen diese CRDs bewusst nicht in der Unused-Tabelle
   oben, da sie in Wirklichkeit Instanzen besitzen könnten.
 - **Fetch errors**: Konnte die Instanzanzahl für eine CRD-Version in einem
   Namespace (bzw. clusterweit) nicht ermittelt werden (z.B. wegen eines nicht
