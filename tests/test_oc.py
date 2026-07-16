@@ -158,6 +158,35 @@ class TestGetOpenshiftResourceVersions:
         assert without_filter[0].versions[0].instances_by_namespace == {"(cluster)": 2}
         assert with_filter == []
 
+    def test_namespace_argument_restricts_scan_to_single_namespace(self):
+        apis_api = MagicMock()
+        apis_api.get_api_versions.return_value = SimpleNamespace(
+            groups=[_group("route.openshift.io", "v1")],
+        )
+
+        api_client = MagicMock()
+        api_client.call_api.return_value = (
+            {"resources": [_resource("routes", "Route", True)]}, 200, {},
+        )
+
+        custom = MagicMock()
+        custom.list_namespaced_custom_object.return_value = {"items": [{}, {}]}
+
+        v1 = MagicMock()  # get_namespaces() must not be called in this mode
+
+        with patch("oc.client.ApisApi", return_value=apis_api), \
+             patch("oc.client.ApiClient", return_value=api_client), \
+             patch("oc.client.CustomObjectsApi", return_value=custom), \
+             patch("kubectl.client.CoreV1Api", return_value=v1):
+            result = oc.get_openshift_resource_versions(namespace="ns-a")
+
+        assert result[0].versions[0].instances_by_namespace == {"ns-a": 2}
+        v1.list_namespace.assert_not_called()
+        custom.list_namespaced_custom_object.assert_called_once_with(
+            group="route.openshift.io", version="v1", namespace="ns-a", plural="routes",
+            _request_timeout=oc._REQUEST_TIMEOUT,
+        )
+
     def test_api_exception_on_cluster_scoped_resource_is_recorded_as_fetch_error(self):
         apis_api = MagicMock()
         apis_api.get_api_versions.return_value = SimpleNamespace(
