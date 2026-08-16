@@ -96,6 +96,16 @@ def _has_fetch_errors(crd: CRDVersionedInfo) -> bool:
     return any(v.fetch_errors for v in crd.versions)
 
 
+def _matches_filters(crd: CRDVersionedInfo, group: str | None, name: str | None) -> bool:
+    if group is not None and group.lower() not in crd.group.lower():
+        return False
+    if name is not None:
+        needle = name.lower()
+        if needle not in crd.name.lower() and needle not in crd.kind.lower():
+            return False
+    return True
+
+
 def _print_fetch_errors(crds: list[CRDVersionedInfo]) -> None:
     entries = sorted(
         (crd.name, v.version, ns, error)
@@ -123,6 +133,18 @@ def main() -> int:
         "--unused",
         action="store_true",
         help="Only list CRDs that have no instances in any version/namespace.",
+    )
+    parser.add_argument(
+        "-g", "--group",
+        default=None,
+        help="Only show CRDs whose API group contains this substring "
+             "(case-insensitive), e.g. -g cert-manager.io.",
+    )
+    parser.add_argument(
+        "--name",
+        default=None,
+        help="Only show CRDs whose resource name or Kind contains this "
+             "substring (case-insensitive).",
     )
     parser.add_argument(
         "--openshift",
@@ -173,8 +195,14 @@ def main() -> int:
                 file=sys.stderr,
             )
 
+    if args.group is not None or args.name is not None:
+        crds = [crd for crd in crds if _matches_filters(crd, args.group, args.name)]
+
     if not crds:
-        print("No CRDs found.")
+        if args.group is not None or args.name is not None:
+            print("No CRDs match the given filter.")
+        else:
+            print("No CRDs found.")
         return 0
 
     if args.unused:

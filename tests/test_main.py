@@ -437,6 +437,85 @@ class TestMain:
         assert "widgets.example.io" in out
         assert "Unhealthy CRDs (status conditions):" in out
 
+    def test_group_filter_keeps_only_matching_crds(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "-g", "cert-manager"])
+        crds = [
+            _crd_info("certificates.cert-manager.io", "cert-manager.io", "Certificate", True,
+                      [_version("v1")]),
+            _crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")]),
+        ]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "certificates.cert-manager.io" in out
+        assert "widgets.example.io" not in out
+
+    def test_group_filter_is_case_insensitive(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "-g", "CERT-MANAGER"])
+        crds = [_crd_info("certificates.cert-manager.io", "cert-manager.io", "Certificate", True,
+                           [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        assert "certificates.cert-manager.io" in capsys.readouterr().out
+
+    def test_name_filter_matches_crd_name_or_kind(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--name", "widget"])
+        crds = [
+            _crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")]),
+            _crd_info("gadgets.example.io", "example.io", "Gadget", True, [_version("v1")]),
+        ]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "widgets.example.io" in out
+        assert "gadgets.example.io" not in out
+
+    def test_group_and_name_filters_combine(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "-g", "example.io", "--name", "widget"])
+        crds = [
+            _crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")]),
+            _crd_info("widgets.other.io", "other.io", "Widget", True, [_version("v1")]),
+        ]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "widgets.example.io" in out
+        assert "widgets.other.io" not in out
+
+    def test_no_match_message_when_filter_excludes_everything(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "-g", "nonexistent"])
+        crds = [_crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")])]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            exit_code = main.main()
+
+        assert exit_code == 0
+        out = capsys.readouterr().out
+        assert "No CRDs match the given filter." in out
+        assert "No CRDs found." not in out
+
+    def test_filter_applies_before_unused_view(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["main.py", "--unused", "-g", "example.io"])
+        crds = [
+            _crd_info("widgets.example.io", "example.io", "Widget", True, [_version("v1")]),
+            _crd_info("gadgets.other.io", "other.io", "Gadget", True, [_version("v1")]),
+        ]
+
+        with patch("main.load_config"), patch("main.get_crd_versions", return_value=crds):
+            main.main()
+
+        out = capsys.readouterr().out
+        assert "widgets.example.io" in out
+        assert "gadgets.other.io" not in out
+
     def test_config_exception_is_reported_cleanly_with_exit_code_1(self, capsys, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["main.py"])
 

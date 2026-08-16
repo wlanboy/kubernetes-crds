@@ -27,11 +27,17 @@ python main.py
 ## Verwendung
 
 ```
-python main.py [-n NAMESPACE] [--unused] [--openshift] [--insecure-skip-tls-verify] [-v]
+python main.py [-n NAMESPACE] [--unused] [-g GROUP] [--name NAME] [--openshift] [--insecure-skip-tls-verify] [-v]
 ```
 
 - `-n, --namespace NAMESPACE`: Beschränkt die Auswertung auf einen Namespace
   (ohne Angabe werden alle Namespaces sowie cluster-scoped CRDs erfasst).
+- `-g, --group GROUP`: Zeigt nur CRDs, deren API-Gruppe diesen Substring
+  enthält (Groß-/Kleinschreibung wird ignoriert), z.B. `-g cert-manager.io`.
+- `--name NAME`: Zeigt nur CRDs, deren Ressourcenname oder Kind diesen
+  Substring enthält (Groß-/Kleinschreibung wird ignoriert). Lässt sich mit
+  `-g` kombinieren, um z.B. bei Clustern mit vielen CRDs (cert-manager,
+  Prometheus-Operator, ...) gezielt einzugrenzen.
 - `--unused`: Listet nur die CRDs auf, die in keiner Version/keinem Namespace
   Instanzen besitzen – praktisch, um Kandidaten für eine Bereinigung zu finden.
   CRDs, bei denen die Instanzanzahl in mindestens einem Namespace nicht ermittelt
