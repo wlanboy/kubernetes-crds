@@ -121,7 +121,8 @@ class TestGetNamespaces:
 class TestCustomList:
     def test_namespaced_calls_list_namespaced_custom_object(self):
         custom = MagicMock()
-        kubectl._custom_list(custom, group="g", version="v1", namespace="ns1", plural="things")
+        gvr = kubectl.GroupVersionResource(group="g", version="v1", plural="things")
+        kubectl._custom_list(custom, gvr, namespace="ns1")
 
         custom.list_namespaced_custom_object.assert_called_once_with(
             group="g", version="v1", namespace="ns1", plural="things",
@@ -131,7 +132,8 @@ class TestCustomList:
 
     def test_cluster_scoped_calls_list_cluster_custom_object(self):
         custom = MagicMock()
-        kubectl._custom_list(custom, group="g", version="v1", namespace=None, plural="things")
+        gvr = kubectl.GroupVersionResource(group="g", version="v1", plural="things")
+        kubectl._custom_list(custom, gvr, namespace=None)
 
         custom.list_cluster_custom_object.assert_called_once_with(
             group="g", version="v1", plural="things",

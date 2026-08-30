@@ -15,9 +15,9 @@ from kubectl import (
     _REQUEST_TIMEOUT,
     CRDVersionedInfo,
     CRDVersionInfo,
+    GroupVersionResource,
+    _count_cluster_scoped_instances,
     _count_instances_by_namespace,
-    _custom_list,
-    _error_reason,
     get_namespaces,
 )
 
@@ -93,24 +93,15 @@ def get_openshift_resource_versions(namespace: str | None = None) -> list[CRDVer
             )
             vinfo = CRDVersionInfo(version=version, served=True, storage=True)
 
+            gvr = GroupVersionResource(group=group, version=version, plural=plural)
             if is_namespaced:
                 vinfo.instances_by_namespace, vinfo.fetch_errors = _count_instances_by_namespace(
-                    custom, group=group, version=version,
-                    plural=plural, namespaces=namespaces_to_scan,
+                    custom, gvr, namespaces=namespaces_to_scan,
                 )
             else:
-                try:
-                    resp = _custom_list(
-                        custom, group=group, version=version, namespace=None, plural=plural,
-                    )
-                    count = len(resp.get("items", []))
-                    if count:
-                        vinfo.instances_by_namespace["(cluster)"] = count
-                except (ApiException, urllib3.exceptions.HTTPError) as e:
-                    logger.debug(
-                        "Failed to list %s/%s %s (cluster-scoped): %s", group, version, plural, e,
-                    )
-                    vinfo.fetch_errors["(cluster)"] = _error_reason(e)
+                vinfo.instances_by_namespace, vinfo.fetch_errors = _count_cluster_scoped_instances(
+                    custom, gvr,
+                )
 
             info.versions.append(vinfo)
             result.append(info)

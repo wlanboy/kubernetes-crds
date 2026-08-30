@@ -27,6 +27,10 @@ _MAX_WORKERS = 10
 # into ApiException, so a read timeout otherwise never surfaces at all.
 _REQUEST_TIMEOUT = 30
 
+# Pseudo-namespace under which cluster-scoped resources' instance counts are
+# recorded, since they have no real namespace to key by.
+CLUSTER_SCOPE = "(cluster)"
+
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -62,6 +66,15 @@ def load_config(*, verify_ssl: bool = True) -> None:
 # Data models
 # ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class GroupVersionResource:
+    """The (group, version, plural) triple identifying a custom resource type
+    — travels together through every listing/counting call below."""
+    group: str
+    version: str
+    plural: str
+
+
 # ---------------------------------------------------------------------------
 # Namespace listing
 # ---------------------------------------------------------------------------
@@ -76,26 +89,25 @@ def get_namespaces() -> list[str]:
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-def _custom_list(custom: client.CustomObjectsApi, *, group: str, version: str,
-                 namespace: str | None, plural: str) -> dict[str, Any]:
+def _custom_list(custom: client.CustomObjectsApi, gvr: GroupVersionResource, *,
+                 namespace: str | None) -> dict[str, Any]:
     if namespace is not None:
         result = custom.list_namespaced_custom_object(
-            group=group, version=version, namespace=namespace, plural=plural,
+            group=gvr.group, version=gvr.version, namespace=namespace, plural=gvr.plural,
             _request_timeout=_REQUEST_TIMEOUT,
         )
     else:
         result = custom.list_cluster_custom_object(
-            group=group, version=version, plural=plural,
+            group=gvr.group, version=gvr.version, plural=gvr.plural,
             _request_timeout=_REQUEST_TIMEOUT,
         )
     return cast(dict[str, Any], result)
 
 
 def _count_instances_by_namespace(
-    custom: client.CustomObjectsApi, *, group: str, version: str,
-    plural: str, namespaces: list[str],
+    custom: client.CustomObjectsApi, gvr: GroupVersionResource, *, namespaces: list[str],
 ) -> tuple[dict[str, int], dict[str, str]]:
-    """Count group/version/plural instances across namespaces concurrently.
+    """Count gvr instances across namespaces concurrently.
 
     Returns (counts, errors): ``errors`` maps namespace -> failure reason for
     namespaces where the count could not be determined at all, so callers can
@@ -106,11 +118,12 @@ def _count_instances_by_namespace(
 
     def _count(ns: str) -> tuple[str, int | None, str | None]:
         try:
-            resp = _custom_list(custom, group=group, version=version, namespace=ns, plural=plural)
+            resp = _custom_list(custom, gvr, namespace=ns)
             return ns, len(resp.get("items", [])), None
         except (ApiException, urllib3.exceptions.HTTPError) as e:
             logger.debug(
-                "Failed to list %s/%s %s in namespace %s: %s", group, version, plural, ns, e,
+                "Failed to list %s/%s %s in namespace %s: %s",
+                gvr.group, gvr.version, gvr.plural, ns, e,
             )
             return ns, None, _error_reason(e)
 
@@ -120,6 +133,23 @@ def _count_instances_by_namespace(
     counts = {ns: count for ns, count, _ in results if count}
     errors = {ns: error for ns, _, error in results if error is not None}
     return counts, errors
+
+
+def _count_cluster_scoped_instances(
+    custom: client.CustomObjectsApi, gvr: GroupVersionResource,
+) -> tuple[dict[str, int], dict[str, str]]:
+    """Count gvr instances for a cluster-scoped resource (no namespace to fan
+    out over). Returns (counts, errors) keyed by CLUSTER_SCOPE, matching the
+    shape of _count_instances_by_namespace so callers can treat both the same."""
+    try:
+        resp = _custom_list(custom, gvr, namespace=None)
+        count = len(resp.get("items", []))
+        return ({CLUSTER_SCOPE: count} if count else {}), {}
+    except (ApiException, urllib3.exceptions.HTTPError) as e:
+        logger.debug(
+            "Failed to list %s/%s %s (cluster-scoped): %s", gvr.group, gvr.version, gvr.plural, e,
+        )
+        return {}, {CLUSTER_SCOPE: _error_reason(e)}
 
 
 def _error_reason(e: Exception) -> str:
@@ -274,26 +304,15 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
             )
 
             if v.served:
+                gvr = GroupVersionResource(group=spec.group, version=v.name, plural=spec.names.plural)
                 if is_namespaced:
                     vinfo.instances_by_namespace, vinfo.fetch_errors = _count_instances_by_namespace(
-                        custom, group=spec.group, version=v.name,
-                        plural=spec.names.plural, namespaces=namespaces_to_scan,
+                        custom, gvr, namespaces=namespaces_to_scan,
                     )
                 else:
-                    try:
-                        resp = _custom_list(
-                            custom, group=spec.group, version=v.name,
-                            namespace=None, plural=spec.names.plural,
-                        )
-                        count = len(resp.get("items", []))
-                        if count:
-                            vinfo.instances_by_namespace["(cluster)"] = count
-                    except (ApiException, urllib3.exceptions.HTTPError) as e:
-                        logger.debug(
-                            "Failed to list %s/%s %s (cluster-scoped): %s",
-                            spec.group, v.name, spec.names.plural, e,
-                        )
-                        vinfo.fetch_errors["(cluster)"] = _error_reason(e)
+                    vinfo.instances_by_namespace, vinfo.fetch_errors = _count_cluster_scoped_instances(
+                        custom, gvr,
+                    )
 
             info.versions.append(vinfo)
 
