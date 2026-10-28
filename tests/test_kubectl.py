@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 
 import kubectl
 

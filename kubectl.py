@@ -12,7 +12,7 @@ from kubernetes.client import (
     V1CustomResourceDefinitionList,
     V1NamespaceList,
 )
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,10 @@ class GroupVersionResource:
 def get_namespaces() -> list[str]:
     v1 = client.CoreV1Api()
     ns_list = cast(V1NamespaceList, v1.list_namespace(_request_timeout=_REQUEST_TIMEOUT))
-    return [ns.metadata.name for ns in (ns_list.items or [])]
+    return [
+        ns.metadata.name for ns in (ns_list.items or [])
+        if ns.metadata is not None and ns.metadata.name is not None
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +269,8 @@ def get_crd_versions(namespace: str | None = None) -> list[CRDVersionedInfo]:
     result: list[CRDVersionedInfo] = []
 
     for crd in (crd_list.items or []):
+        if crd.metadata is None or crd.metadata.name is None:
+            continue
         spec = crd.spec
         is_namespaced = spec.scope == "Namespaced"
 

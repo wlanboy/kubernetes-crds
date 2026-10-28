@@ -6,7 +6,7 @@ import logging
 import sys
 
 import urllib3
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
 
 from kubectl import CRDVersionedInfo, get_crd_versions, load_config

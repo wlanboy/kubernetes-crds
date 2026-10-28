@@ -4,7 +4,7 @@ import sys
 from unittest.mock import MagicMock, patch
 
 import urllib3
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 from kubernetes.config import ConfigException
 
 import main

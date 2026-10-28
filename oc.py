@@ -9,7 +9,7 @@ from typing import Any, cast
 import urllib3
 from kubernetes import client
 from kubernetes.client import V1APIGroupList
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 
 from kubectl import (
     _REQUEST_TIMEOUT,
@@ -35,7 +35,7 @@ def _list_openshift_group_versions() -> list[tuple[str, str]]:
     return [
         (group.name, group.preferred_version.version)
         for group in (group_list.groups or [])
-        if group.name.endswith(_OPENSHIFT_GROUP_SUFFIX)
+        if group.name.endswith(_OPENSHIFT_GROUP_SUFFIX) and group.preferred_version is not None
     ]
 
 
@@ -44,18 +44,19 @@ def _discover_group_version_resources(api_client: client.ApiClient, group: str,
     """Raw discovery call for /apis/{group}/{version} — the resource list (Kind, plural
     name, namespaced) isn't modeled by the generated client since it's cluster-specific."""
     try:
-        resp = cast(
-            "tuple[dict[str, Any], int, dict[str, str]]",
-            api_client.call_api(
-                f"/apis/{group}/{version}", "GET",
-                auth_settings=["BearerToken"], response_types_map={200: "object"},
-                _request_timeout=_REQUEST_TIMEOUT,
-            ),
+        request = api_client.param_serialize(
+            "GET", f"/apis/{group}/{version}", auth_settings=["BearerToken"],
+        )
+        response = api_client.call_api(*request, _request_timeout=_REQUEST_TIMEOUT)
+        response.read()
+        # response_deserialize raises ApiException for non-2xx statuses.
+        body = cast(
+            "dict[str, Any] | None",
+            api_client.response_deserialize(response, {"200": "object"}).data,
         )
     except (ApiException, urllib3.exceptions.HTTPError) as e:
         logger.debug("Discovery failed for %s/%s: %s", group, version, e)
         return []
-    body = resp[0]
     if body is None:
         return []
     # Skip subresources such as "routes/status", and any entry missing the

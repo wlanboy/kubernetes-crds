@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from kubernetes.client.rest import ApiException
+from kubernetes.client.exceptions import ApiException
 
 import oc
 
@@ -14,6 +14,18 @@ def _group(name: str, preferred_version: str) -> SimpleNamespace:
 
 def _resource(name: str, kind: str, namespaced: bool) -> dict:
     return {"name": name, "kind": kind, "namespaced": namespaced}
+
+
+def _discovery_client(*bodies: dict | None) -> MagicMock:
+    """ApiClient mock whose discovery calls deserialize to the given bodies, in order."""
+    api_client = MagicMock()
+    api_client.param_serialize.return_value = ("GET", "https://k8s/apis", {}, None, None)
+    responses = [SimpleNamespace(data=b) for b in bodies]
+    if len(responses) == 1:
+        api_client.response_deserialize.return_value = responses[0]
+    else:
+        api_client.response_deserialize.side_effect = responses
+    return api_client
 
 
 class TestListOpenshiftGroupVersions:
@@ -32,45 +44,51 @@ class TestListOpenshiftGroupVersions:
 
 class TestDiscoverGroupVersionResources:
     def test_subresources_are_skipped(self):
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
+        api_client = _discovery_client(
             {"resources": [
                 {"name": "routes", "kind": "Route", "namespaced": True},
                 {"name": "routes/status", "kind": "Route", "namespaced": True},
             ]},
-            200,
-            {},
         )
 
         result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
 
         assert [r["name"] for r in result] == ["routes"]
 
-    def test_response_types_map_uses_integer_status_code(self):
-        # api_client.call_api looks up response_types_map by the *integer*
-        # HTTP status code internally (response_types_map.get(response.status)).
-        # A string key like {"200": ...} silently misses and yields a None body.
-        api_client = MagicMock()
-        api_client.call_api.return_value = ({"resources": []}, 200, {})
+    def test_response_types_map_uses_string_status_code(self):
+        # response_deserialize looks up response_types_map by str(response.status).
+        # An integer key like {200: ...} silently misses and yields a None body.
+        api_client = _discovery_client({"resources": []})
 
         oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
 
-        kwargs = api_client.call_api.call_args.kwargs
-        assert kwargs["response_types_map"] == {200: "object"}
+        args = api_client.response_deserialize.call_args.args
+        assert args[1] == {"200": "object"}
+
+    def test_request_is_sent_with_timeout(self):
+        api_client = _discovery_client({"resources": []})
+
+        oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
+
+        api_client.param_serialize.assert_called_once_with(
+            "GET", "/apis/route.openshift.io/v1", auth_settings=["BearerToken"],
+        )
+        api_client.call_api.assert_called_once_with(
+            *api_client.param_serialize.return_value, _request_timeout=oc._REQUEST_TIMEOUT,
+        )
 
     def test_none_body_is_treated_as_no_resources(self):
         # Mirrors what the real client returns when response_types_map doesn't
         # match the response status: body comes back as None instead of a dict.
-        api_client = MagicMock()
-        api_client.call_api.return_value = (None, 200, {})
+        api_client = _discovery_client(None)
 
         result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
 
         assert result == []
 
     def test_api_exception_returns_empty_list(self):
-        api_client = MagicMock()
-        api_client.call_api.side_effect = ApiException(status=403)
+        api_client = _discovery_client()
+        api_client.response_deserialize.side_effect = ApiException(status=403)
 
         result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
 
@@ -80,15 +98,12 @@ class TestDiscoverGroupVersionResources:
         # Real discovery responses always carry both fields, but the resource
         # list is cluster-supplied — a malformed entry must not blow up with
         # a raw KeyError further down the line.
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
+        api_client = _discovery_client(
             {"resources": [
                 {"name": "routes", "kind": "Route", "namespaced": True},
                 {"name": "broken", "namespaced": True},
                 {"kind": "AlsoBroken", "namespaced": True},
             ]},
-            200,
-            {},
         )
 
         result = oc._discover_group_version_resources(api_client, "route.openshift.io", "v1")
@@ -103,9 +118,8 @@ class TestGetOpenshiftResourceVersions:
             groups=[_group("route.openshift.io", "v1")],
         )
 
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
-            {"resources": [_resource("routes", "Route", True)]}, 200, {},
+        api_client = _discovery_client(
+            {"resources": [_resource("routes", "Route", True)]},
         )
 
         custom = MagicMock()
@@ -134,11 +148,9 @@ class TestGetOpenshiftResourceVersions:
             groups=[_group("security.openshift.io", "v1")],
         )
 
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
+        api_client = _discovery_client(
             {"resources": [_resource("securitycontextconstraints", "SecurityContextConstraints",
                                       False)]},
-            200, {},
         )
 
         custom = MagicMock()
@@ -164,9 +176,8 @@ class TestGetOpenshiftResourceVersions:
             groups=[_group("route.openshift.io", "v1")],
         )
 
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
-            {"resources": [_resource("routes", "Route", True)]}, 200, {},
+        api_client = _discovery_client(
+            {"resources": [_resource("routes", "Route", True)]},
         )
 
         custom = MagicMock()
@@ -193,11 +204,9 @@ class TestGetOpenshiftResourceVersions:
             groups=[_group("security.openshift.io", "v1")],
         )
 
-        api_client = MagicMock()
-        api_client.call_api.return_value = (
+        api_client = _discovery_client(
             {"resources": [_resource("securitycontextconstraints", "SecurityContextConstraints",
                                       False)]},
-            200, {},
         )
 
         custom = MagicMock()
@@ -222,11 +231,10 @@ class TestGetOpenshiftResourceVersions:
             _group("apps.openshift.io", "v1"),
         ])
 
-        api_client = MagicMock()
-        api_client.call_api.side_effect = [
-            ({"resources": [_resource("builds", "Build", True)]}, 200, {}),
-            ({"resources": [_resource("deploymentconfigs", "DeploymentConfig", True)]}, 200, {}),
-        ]
+        api_client = _discovery_client(
+            {"resources": [_resource("builds", "Build", True)]},
+            {"resources": [_resource("deploymentconfigs", "DeploymentConfig", True)]},
+        )
 
         custom = MagicMock()
         custom.list_namespaced_custom_object.return_value = {"items": []}
