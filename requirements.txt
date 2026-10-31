@@ -42,9 +42,9 @@ propcache==0.5.4
     # via
     #   aiohttp
     #   yarl
-pydantic==2.14.1
+pydantic==2.14.2
     # via kubernetes
-pydantic-core==2.50.1
+pydantic-core==2.50.2
     # via pydantic
 python-dateutil==3.0.0
     # via kubernetes
